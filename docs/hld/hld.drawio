@@ -1,0 +1,145 @@
+<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36" version="29.4.0">
+  <diagram name="Page-1" id="LDloMf-bGuutnmnCMJUT">
+    <mxGraphModel grid="1" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="layer_data" parent="1" style="swimlane;horizontal=0;whiteSpace=wrap;html=1;startSize=50;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="Data Collection &amp;amp; Data Storage Layer" vertex="1">
+          <mxGeometry height="140" width="840" x="80" y="600" as="geometry" />
+        </mxCell>
+        <mxCell id="binance_api" parent="layer_data" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" value="Binance API&#xa;(Spot Market Data)" vertex="1">
+          <mxGeometry height="90" width="140" x="60" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="pipeline" parent="layer_data" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="Data Pipeline&#xa;(ETL &amp; WebSocket)" vertex="1">
+          <mxGeometry height="60" width="120" x="280" y="55" as="geometry" />
+        </mxCell>
+        <mxCell id="normalization" parent="layer_data" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="Normalization&lt;br&gt;(Min-Max / Z-Score)" vertex="1">
+          <mxGeometry height="60" width="120" x="430" y="55" as="geometry" />
+        </mxCell>
+        <mxCell id="raw_db" parent="layer_data" style="shape=cyl;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffe6cc;strokeColor=#d79b00;" value="PostgreSQL DB&lt;br&gt;(Raw &amp;amp; Transaction Logs)" vertex="1">
+          <mxGeometry height="100" width="100" x="600" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="edge14" edge="1" parent="layer_data" source="pipeline" target="normalization">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge15" edge="1" parent="layer_data" source="normalization" target="raw_db">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge16" edge="1" parent="layer_data" source="binance_api" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="pipeline" value="WebSocket / REST">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="layer_feature" parent="1" style="swimlane;horizontal=0;whiteSpace=wrap;html=1;startSize=50;fillColor=#e1d5e7;strokeColor=#9673a6;" value="Feature Engineering Layer" vertex="1">
+          <mxGeometry height="150" width="840" x="80" y="430" as="geometry" />
+        </mxCell>
+        <mxCell id="tech_ind" parent="layer_feature" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" value="Technical Indicator Module&lt;div&gt;(RSI, MACD, MA, Bollinger)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="160" x="270" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="feature_store" parent="layer_feature" style="shape=cyl;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;" value="Feature Store Matrix" vertex="1">
+          <mxGeometry height="100" width="100" x="600" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="edge12" edge="1" parent="layer_feature" source="tech_ind" target="feature_store">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="layer_model" parent="1" style="swimlane;horizontal=0;whiteSpace=wrap;html=1;startSize=50;fillColor=#d5e8d4;strokeColor=#82b366;" value="Hybrid Prediction Layer" vertex="1">
+          <mxGeometry height="140" width="840" x="80" y="270" as="geometry" />
+        </mxCell>
+        <mxCell id="model_arima" parent="layer_model" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="Statistical Models&lt;br&gt;(ARIMA / Prophet)" vertex="1">
+          <mxGeometry height="60" width="140" x="150" y="55" as="geometry" />
+        </mxCell>
+        <mxCell id="model_ml" parent="layer_model" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="Machine Learning&lt;div&gt;(XGBoost / LightGBM)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="140" x="360" y="55" as="geometry" />
+        </mxCell>
+        <mxCell id="model_dl" parent="layer_model" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontStyle=1" value="Deep Learning&lt;div&gt;(LSTM / GRU)&lt;/div&gt;" vertex="1">
+          <mxGeometry height="60" width="140" x="550" y="55" as="geometry" />
+        </mxCell>
+        <mxCell id="model_trans" parent="layer_model" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#f5f5f5;strokeColor=#666666;" value="Optional:&lt;br&gt;Transformer" vertex="1">
+          <mxGeometry height="60" width="100" x="710" y="55" as="geometry" />
+        </mxCell>
+        <mxCell id="layer_agent" parent="1" style="swimlane;horizontal=0;whiteSpace=wrap;html=1;startSize=50;fillColor=#f8cecc;strokeColor=#b85450;" value="Autonomous Decision and Execution Layer" vertex="1">
+          <mxGeometry height="120" width="840" x="80" y="130" as="geometry" />
+        </mxCell>
+        <mxCell id="llm_agent" parent="layer_agent" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fixedSize=1;fillColor=#ffcc99;strokeColor=#36393d;fontStyle=1;fontSize=14;" value="Autonomous AI Agent" vertex="1">
+          <mxGeometry height="90" width="160" x="350" y="15" as="geometry" />
+        </mxCell>
+        <mxCell id="risk_mod" parent="layer_agent" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="Risk Management&lt;br&gt;(Max Drawdown)" vertex="1">
+          <mxGeometry height="60" width="120" x="100" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="execution" parent="layer_agent" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="Order Execution System" vertex="1">
+          <mxGeometry height="60" width="120" x="600" y="30" as="geometry" />
+        </mxCell>
+        <mxCell id="edge4" edge="1" parent="layer_agent" source="risk_mod" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="llm_agent" value="Risk Parameters">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge5" edge="1" parent="layer_agent" source="llm_agent" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="execution" value="Buy/Sell">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="layer_ui" parent="1" style="swimlane;horizontal=0;whiteSpace=wrap;html=1;startSize=50;fillColor=#fff2cc;strokeColor=#d6b656;" value="UI" vertex="1">
+          <mxGeometry height="90" width="840" x="80" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="react_ui" parent="layer_ui" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="React Dashboard" vertex="1">
+          <mxGeometry height="50" width="120" x="320" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="user" parent="layer_ui" style="shape=actor;whiteSpace=wrap;html=1;" value="&lt;br&gt;User" vertex="1">
+          <mxGeometry height="60" width="40" x="70" y="15" as="geometry" />
+        </mxCell>
+        <mxCell id="api_gw" parent="layer_ui" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" value="API Gateway" vertex="1">
+          <mxGeometry height="40" width="100" x="170" y="25" as="geometry" />
+        </mxCell>
+        <mxCell id="edge1" edge="1" parent="layer_ui" source="user" target="api_gw">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge2" edge="1" parent="layer_ui" source="api_gw" target="react_ui">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge3" edge="1" parent="1" source="api_gw" target="risk_mod">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge6" edge="1" parent="1" source="model_arima" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.25;entryY=1;entryDx=0;entryDy=0;" target="llm_agent" value="Prediction signals">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="300" y="310" />
+              <mxPoint x="470" y="310" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge7" edge="1" parent="1" source="model_ml" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" target="llm_agent">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="510" y="310" />
+              <mxPoint x="510" y="310" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge8" edge="1" parent="1" source="model_dl" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.75;entryY=1;entryDx=0;entryDy=0;" target="llm_agent">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="700" y="290" />
+              <mxPoint x="550" y="290" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge9" edge="1" parent="1" source="feature_store" target="model_arima">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge10" edge="1" parent="1" source="feature_store" target="model_ml">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge11" edge="1" parent="1" source="feature_store" target="model_dl">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge13" edge="1" parent="1" source="raw_db" target="tech_ind">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge17" edge="1" parent="1" source="execution" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;" target="binance_api" value="API Order">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="900" y="210" />
+              <mxPoint x="900" y="620" />
+              <mxPoint x="210" y="620" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
