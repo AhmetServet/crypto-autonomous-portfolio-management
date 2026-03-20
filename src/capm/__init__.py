@@ -1,2 +1,5 @@
-def main() -> None:
-    print("Hello from capm!")
+"""Top-level package for the CAPM project."""
+
+from .main import main
+
+__all__ = ["main"]

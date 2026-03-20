@@ -7,7 +7,9 @@ authors = [
     { name = "Ahmet Servet Polat", email = "ahmetservet04@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "httpx>=0.28.1",
+]
 
 [project.scripts]
 capm = "capm:main"

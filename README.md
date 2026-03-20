@@ -6,3 +6,36 @@ This is the monorepo of our graduation project. Everything including docs, analy
 - Ahmet Servet Polat
 - Kenan Koçoğlu
 - Mehmet Enes Odabaş
+
+## Python Workspace
+The first implementation slice now includes a Python package under `src/capm` for Binance spot market-data ingestion.
+
+### Documentation
+- Low-level design: `docs/lld/binance_spot_market_data/binance_spot_market_data_lld.md`
+
+### Setup
+```bash
+uv sync
+```
+
+### Fetch OHLC Data
+The CLI currently supports historical OHLCV retrieval from Binance spot demo mode or live mode.
+
+```bash
+uv run capm fetch-ohlc \
+  --symbol BTC/USDT \
+  --interval 1m \
+  --start 2024-01-01T00:00:00Z \
+  --end 2024-01-01T01:00:00Z \
+  --mode demo
+```
+
+Notes:
+- `--start` is inclusive.
+- `--end` is exclusive.
+- Supported intervals currently include `1s`, `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `6h`, `8h`, `12h`, `1d`, `3d`, and `1w`.
+
+### Tests
+```bash
+uv run python -m unittest discover -s tests -t . -v
+```
