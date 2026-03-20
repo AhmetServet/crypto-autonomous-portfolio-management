@@ -138,6 +138,7 @@ Future path:
 │  ├─ integration/
 │  ├─ contract/
 │  └─ e2e/
+├─ experiments/                    # Model-focused experiments and profitability observations (not test suites)
 ├─ configs/
 │  ├─ base.yaml
 │  ├─ dev.yaml
@@ -253,7 +254,12 @@ Core expectation:
 
 - Critical risk rules and LLM response parsing paths require exhaustive test coverage.
 
-## 11. Implementation Phases
+### 11 Experiments Workspace
+
+- `experiments/` is reserved for model-focused exploratory work rather than application test suites.
+- It is used to run model trials and observe profitability behavior in a controlled workspace.
+
+## 12. Implementation Phases
 
 ### Phase 1: Foundation
 
