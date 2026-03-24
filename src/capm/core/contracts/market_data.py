@@ -21,3 +21,13 @@ class HistoricalMarketDataPort(Protocol):
         limit: int = 1000,
     ) -> list[OHLCV]:
         """Fetch one ascending page of candles from the exchange."""
+
+
+class MarketDataRepositoryPort(Protocol):
+    """Abstracts the storage mechanism for OHLCV data."""
+
+    def save_ohlcv_batch(self, candles: list[OHLCV]) -> None:
+        """Save a batch of OHLCV candles to the database."""
+
+    def get_latest_candle_time(self, symbol: str, interval: str) -> datetime | None:
+        """Get the open_time of the latest stored candle for a symbol and interval."""

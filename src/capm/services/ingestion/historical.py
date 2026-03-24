@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from capm.core.contracts import HistoricalMarketDataPort
+from capm.core.contracts import HistoricalMarketDataPort, MarketDataRepositoryPort
 from capm.core.errors import PaginationError
 from capm.domains.market_data import HistoricalOHLCRequest, OHLCV
 
@@ -15,6 +15,7 @@ class HistoricalMarketDataIngestionService:
     """Fetches historical candles across exchange page boundaries."""
 
     market_data_port: HistoricalMarketDataPort
+    repository_port: MarketDataRepositoryPort | None = None
 
     def fetch_ohlcv(self, request: HistoricalOHLCRequest) -> list[OHLCV]:
         """Retrieve candles for the full requested range."""
@@ -54,6 +55,10 @@ class HistoricalMarketDataIngestionService:
                     continue
                 candles.append(candle)
                 seen_open_times.add(candle.open_time)
+
+            # Opsiyonel: Veritabanı tanımlıysa, veriyi çekilir çekilmez kaydet.
+            if self.repository_port:
+                self.repository_port.save_ohlcv_batch(page)
 
             cursor = next_cursor
 
