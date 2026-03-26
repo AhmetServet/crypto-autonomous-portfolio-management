@@ -3,6 +3,9 @@
 ## 1. Purpose
 This document describes the low-level design of the first implemented market-data module in `src/capm`.
 
+Storage-specific details now live in `docs/lld/data_store/lld.md`.
+Database schema bootstrap details now live in `src/capm/init_db.py` and `docs/lld/data_store/lld.md`.
+
 The module covers:
 - historical OHLCV retrieval from Binance spot
 - request validation and normalization
@@ -19,11 +22,11 @@ Included in scope:
 - supported interval validation
 - UTC normalization for time boundaries
 - pagination across bounded date ranges
+- persistence handoff to the SQLAlchemy/TimescaleDB storage module
 - retry and backoff for transient request failures
 - JSON serialization for CLI output
 
 Out of scope for this module:
-- persistence to PostgreSQL
 - WebSocket streaming
 - backfill gap detection against stored candles
 - account, balance, or order endpoints
@@ -42,7 +45,10 @@ src/capm/
 ├─ services/
 │  └─ ingestion/historical.py
 ├─ infra/
-│  └─ exchange/binance_spot.py
+│  ├─ exchange/binance_spot.py
+│  └─ database/
+│     ├─ models.py
+│     └─ timescale.py
 └─ main.py
 ```
 
@@ -228,7 +234,6 @@ uv run python -m unittest discover -s tests -t . -v
 - secrets remain environment-based once private endpoints are introduced later
 
 ## 10. Known Limitations
-- no persistence layer yet, so all fetched data is in-memory only
 - no WebSocket stream handling yet
 - no gap-repair against stored historical datasets yet
 - no rate-limit budgeting beyond basic retries
@@ -237,8 +242,7 @@ uv run python -m unittest discover -s tests -t . -v
 
 ## 11. Next Integration Steps
 Recommended follow-up work:
-1. add SQLAlchemy models and repositories for raw candles
-2. persist backfilled candles idempotently
-3. add exchange metadata discovery for valid symbols
-4. implement WebSocket close-candle ingestion for `1m`
-5. add integration tests that exercise the configured Binance base URL
+1. add exchange metadata discovery for valid symbols
+2. implement WebSocket close-candle ingestion for `1m`
+3. add integration tests that exercise the configured Binance base URL
+4. extend persistence to cover generic metadata points and sync statuses

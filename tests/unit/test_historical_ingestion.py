@@ -43,6 +43,40 @@ class FakeHistoricalMarketDataPort:
         return self._pages.pop(0)
 
 
+class FakeMarketDataRepository:
+    """Test double that captures persisted candle batches."""
+
+    def __init__(self) -> None:
+        self.saved_batches: list[list[OHLCV]] = []
+
+    def save_ohlcv_batch(self, candles: list[OHLCV]) -> None:
+        self.saved_batches.append(list(candles))
+
+    def get_latest_candle_time(self, symbol: str, interval: str) -> datetime | None:
+        raise NotImplementedError
+
+    def get_candles(
+        self,
+        symbol: str,
+        interval: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> list[OHLCV]:
+        raise NotImplementedError
+
+    def get_candle(self, symbol: str, interval: str, open_time: datetime) -> OHLCV | None:
+        raise NotImplementedError
+
+    def delete_candles(
+        self,
+        symbol: str,
+        interval: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> int:
+        raise NotImplementedError
+
+
 class HistoricalMarketDataIngestionServiceTests(unittest.TestCase):
     """Exercise multi-page retrieval behavior."""
 
@@ -69,6 +103,39 @@ class HistoricalMarketDataIngestionServiceTests(unittest.TestCase):
         self.assertEqual(
             port.calls[1]["start_at"],
             datetime(2024, 1, 1, 0, 2, 0, tzinfo=UTC),
+        )
+
+    def test_service_persists_only_filtered_and_deduplicated_candles(self) -> None:
+        port = FakeHistoricalMarketDataPort(
+            pages=[
+                [
+                    make_candle(0),
+                    make_candle(1),
+                    make_candle(1),
+                    make_candle(3),
+                ]
+            ]
+        )
+        repository = FakeMarketDataRepository()
+        service = HistoricalMarketDataIngestionService(
+            market_data_port=port,
+            repository_port=repository,
+        )
+
+        candles = service.fetch_ohlcv(
+            HistoricalOHLCRequest(
+                symbol="BTCUSDT",
+                interval="1m",
+                start_at=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                end_at=datetime(2024, 1, 1, 0, 2, 0, tzinfo=UTC),
+            )
+        )
+
+        self.assertEqual([candle.open_time.minute for candle in candles], [0, 1])
+        self.assertEqual(len(repository.saved_batches), 1)
+        self.assertEqual(
+            [candle.open_time.minute for candle in repository.saved_batches[0]],
+            [0, 1],
         )
 
 
