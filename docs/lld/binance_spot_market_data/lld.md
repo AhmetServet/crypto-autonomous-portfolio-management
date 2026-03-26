@@ -3,6 +3,9 @@
 ## 1. Purpose
 This document describes the low-level design of the first implemented market-data module in `src/capm`.
 
+Storage-specific details now live in `docs/lld/data_store/lld.md`.
+Database schema bootstrap details now live in `src/capm/init_db.py` and `docs/lld/data_store/lld.md`.
+
 The module covers:
 - historical OHLCV retrieval from Binance spot
 - request validation and normalization
@@ -19,7 +22,7 @@ Included in scope:
 - supported interval validation
 - UTC normalization for time boundaries
 - pagination across bounded date ranges
-- persistence to PostgreSQL/TimescaleDB using SQLAlchemy ORM (Full CRUD)
+- persistence handoff to the SQLAlchemy/TimescaleDB storage module
 - retry and backoff for transient request failures
 - JSON serialization for CLI output
 

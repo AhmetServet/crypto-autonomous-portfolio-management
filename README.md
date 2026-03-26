@@ -11,11 +11,22 @@ This is the monorepo of our graduation project. Everything including docs, analy
 The first implementation slice now includes a Python package under `src/capm` for Binance spot market-data ingestion.
 
 ### Documentation
-- Low-level design: `docs/lld/binance_spot_market_data/binance_spot_market_data_lld.md`
+- Binance market-data LLD: `docs/lld/binance_spot_market_data/lld.md`
+- Data-store LLD: `docs/lld/data_store/lld.md`
 
 ### Setup
 ```bash
 uv sync
+```
+
+Create a local environment file before running the storage example:
+```bash
+cp .env.example .env
+```
+
+Initialize the CAPM schema before the first ingestion run:
+```bash
+uv run capm-init-db --symbol BTCUSDT
 ```
 
 ### Fetch OHLC Data

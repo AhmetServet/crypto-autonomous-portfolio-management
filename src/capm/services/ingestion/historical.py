@@ -48,17 +48,18 @@ class HistoricalMarketDataIngestionService:
                     "Refusing to continue to avoid an infinite loop."
                 )
 
+            persisted_page: list[OHLCV] = []
             for candle in page:
                 if candle.open_time < request.start_at or candle.open_time >= request.end_at:
                     continue
                 if candle.open_time in seen_open_times:
                     continue
                 candles.append(candle)
+                persisted_page.append(candle)
                 seen_open_times.add(candle.open_time)
 
-            # Opsiyonel: Veritabanı tanımlıysa, veriyi çekilir çekilmez kaydet.
-            if self.repository_port:
-                self.repository_port.save_ohlcv_batch(page)
+            if self.repository_port and persisted_page:
+                self.repository_port.save_ohlcv_batch(persisted_page)
 
             cursor = next_cursor
 
