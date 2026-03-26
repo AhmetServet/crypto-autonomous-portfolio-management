@@ -20,7 +20,7 @@ def run_ingestion() -> None:
     # Şifreyi veya kullanıcıyı kendi sisteminizdeki ile değiştirin.
     db_conn_string = os.getenv(
         "DATABASE_URL", 
-        "postgresql://postgres:postgres@localhost:5432/capm_db"
+        "postgresql+psycopg://postgres:postgres@localhost:5432/capm_db"
     )
     db_repo = TimescaleMarketDataRepository(db_conn_string)
     
