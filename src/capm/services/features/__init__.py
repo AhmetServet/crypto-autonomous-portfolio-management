@@ -1,17 +1,15 @@
-"""Application services."""
+"""Feature engineering services."""
 
-from .features import (
+from .pipeline import (
     FeatureBackfillChunk,
     FeatureBackfillResult,
     FeatureBatch,
     IndicatorPipelineService,
 )
-from .ingestion import HistoricalMarketDataIngestionService
 
 __all__ = [
     "FeatureBackfillChunk",
     "FeatureBackfillResult",
     "FeatureBatch",
-    "HistoricalMarketDataIngestionService",
     "IndicatorPipelineService",
 ]

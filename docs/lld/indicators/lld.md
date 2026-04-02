@@ -275,16 +275,18 @@ Recommended caller policy:
 ## 10. Persistence Strategy
 
 ### 10.1 Preferred V1 Shape
-The preferred v1 persistence design is a separate derived-feature store keyed one-to-one to raw candles.
+The implemented v1 persistence design uses a separate derived-feature store keyed one-to-one to raw candles.
 
 Logical key:
 - `symbol`
 - `interval`
 - `open_time`
 
-Recommended physical direction:
+Implemented physical direction:
 - keep raw `OHLCV` storage as the source of truth in the existing market-data store
-- persist indicator outputs in a separate feature table or symbol-scoped feature table
+- persist indicator outputs in a separate symbol-scoped feature table named like `BTCUSDT_features`
+- store indicator values in a JSON payload keyed by stable feature names
+- store `is_ready` and `missing_outputs` beside the payload for ML-safe reads
 - assemble canonical `FeatureRow` objects by merging raw candle data with aligned derived values at read time
 
 Why this is preferred over adding columns directly to raw candle tables:
@@ -294,11 +296,13 @@ Why this is preferred over adding columns directly to raw candle tables:
 - repository ports can hide the join or view implementation from the domain layer
 
 ### 10.2 Repository Contract
-Proposed ports in `core/contracts/features.py`:
+Current ports in `core/contracts/features.py`:
 
 - `FeatureRepositoryPort`
   - `save_indicator_batch(records) -> None`
   - `get_indicator_batch(symbol, interval, start_time, end_time) -> list[ComputedIndicatorSet]`
+  - `get_indicator_set(symbol, interval, open_time) -> ComputedIndicatorSet | None`
+  - `get_latest_indicator_time(symbol, interval) -> datetime | None`
   - `delete_indicator_batch(symbol, interval, start_time, end_time) -> int`
 
 - `FeatureWindowReadPort`
@@ -308,6 +312,7 @@ Proposed ports in `core/contracts/features.py`:
 Behavior:
 - writes are idempotent by candle key
 - reads return ordered results
+- repositories can expose joined feature-row reads without materializing a separate training table
 - repositories may implement joins, views, or denormalized caches internally without changing callers
 
 ### 10.3 Alignment Rules
@@ -424,13 +429,12 @@ uv run python -m unittest discover -s tests -t . -v
 
 ## 16. Known Limitations
 - v1 does not implement full config-defined custom indicators
-- feature persistence physical layout remains abstract until the storage slice is implemented
+- feature payloads are stored as JSON mappings rather than one typed DB column per indicator output
 - cross-symbol feature queries are not optimized in this design
 - normalization and label creation are intentionally deferred to downstream ML modules
 
 ## 17. Next Implementation Steps
-1. create `src/capm/domains/features/` with immutable entities, calculators, and windowing helpers
-2. add `src/capm/core/contracts/features.py` for derived-feature persistence and window reads
-3. implement a thin `services/features/pipeline.py` orchestration layer
-4. add focused unit tests under `tests/unit/` for indicator calculations and window semantics
-5. decide the concrete database shape in the storage implementation while preserving the contracts in this document
+1. add integration tests against PostgreSQL + TimescaleDB for raw and feature tables
+2. version feature payloads explicitly once multiple model profiles are introduced
+3. evaluate whether a materialized training read model is needed for large historical ML jobs
+4. extend the example and future worker flows to recompute indicators automatically after gap repair and backfills
