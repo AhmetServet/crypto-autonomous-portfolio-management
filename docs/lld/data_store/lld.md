@@ -28,7 +28,6 @@ Included in scope:
 Out of scope:
 - Alembic migrations
 - retention/compression policies
-- feature-matrix persistence
 - cross-symbol analytics queries
 - integration tests against a live TimescaleDB instance
 
@@ -78,18 +77,44 @@ Notes:
 - `open_time` stays in the primary key to match TimescaleDB uniqueness expectations for time-series tables
 - a single symbol table can hold multiple intervals if needed later
 
+### 4.3 Feature Table Per Symbol
+Each trading pair also has a dedicated derived-feature table.
+
+Examples:
+- `BTCUSDT_features`
+- `ETHUSDT_features`
+
+Each feature table stores:
+- `interval`
+- `open_time`
+- `is_ready`
+- `feature_payload`
+- `missing_outputs`
+
+Primary key:
+- `(interval, open_time)`
+
+Notes:
+- feature values are stored as a JSON payload keyed by stable indicator names
+- raw OHLCV remains the source of truth, while the feature table stores recomputable derived values
+- canonical ML rows are assembled by joining raw and derived data on `(symbol, interval, open_time)`
+
 ## 5. ORM Design
 
 ### 5.1 Dynamic Model Factory
 `src/capm/infra/database/models.py` exposes a dynamic SQLAlchemy model factory:
 - `get_ohlcv_model(symbol)`
 - `candle_to_record(entity)`
+- `get_feature_model(symbol)`
+- `indicator_to_record(entity)`
 
 Behavior:
 - symbols are normalized through the existing market-data domain rules
 - one ORM model class is cached per symbol
-- each generated model maps to a table named after that normalized symbol
+- each generated OHLCV model maps to a table named after that normalized symbol
+- each generated feature model maps to a table named after `<symbol>_features`
 - `to_domain()` reconstructs `OHLCV` using the symbol encoded in the model class
+- feature models reconstruct `ComputedIndicatorSet` using the symbol encoded in the model class
 
 ### 5.2 Why Dynamic Models
 The repository must support user-selected symbols without pre-declaring every possible pair at code generation time. Dynamic models keep the service layer simple while allowing symbol-scoped tables.
@@ -101,9 +126,10 @@ The repository must support user-selected symbols without pre-declaring every po
 
 Responsibilities:
 - normalize PostgreSQL connection strings for SQLAlchemy + psycopg
-- create symbol tables lazily inside the configured schema
+- create symbol-scoped raw and feature tables lazily inside the configured schema
 - bootstrap TimescaleDB hypertables on PostgreSQL
-- expose create/read/update/delete methods for OHLCV candles
+- expose create/read/update/delete methods for OHLCV candles and derived indicator rows
+- expose joined feature-row reads for ML-facing window assembly
 - return predictable results even when a symbol table does not exist yet
 
 ### 6.2 CRUD Methods
@@ -112,6 +138,12 @@ Responsibilities:
 - creates missing symbol tables on first write
 - uses PostgreSQL `ON CONFLICT DO UPDATE` when the backend is PostgreSQL
 - falls back to ORM `merge()` for non-PostgreSQL test environments
+
+`save_indicator_batch(records)`:
+- groups derived rows by symbol
+- creates missing feature tables on first write
+- upserts by `(interval, open_time)`
+- stores feature names and values in a JSON payload
 
 `get_candles(symbol, interval, start_time, end_time)`:
 - returns candles ordered by `open_time ASC`
@@ -130,12 +162,39 @@ Responsibilities:
 - deletes candles in a half-open range
 - returns the deleted row count
 
+`get_indicator_batch(symbol, interval, start_time, end_time)`:
+- returns derived rows ordered by `open_time ASC`
+- uses half-open range semantics `[start_time, end_time)`
+- returns an empty list if the feature table does not exist
+
+`get_indicator_set(symbol, interval, open_time)`:
+- reads exactly one derived row by key
+- returns `None` if no row exists
+
+`get_latest_indicator_time(symbol, interval)`:
+- returns the latest stored derived-row `open_time`
+- returns `None` if no rows exist
+
+`delete_indicator_batch(symbol, interval, start_time, end_time)`:
+- deletes derived rows in a half-open range
+- returns the deleted row count
+
+`get_feature_rows(symbol, interval, start_time, end_time)`:
+- reads raw candles and aligned derived rows
+- joins them in repository code to produce canonical feature rows
+- returns placeholder non-ready rows when raw candles exist but derived rows are missing
+
+`get_latest_complete_window(symbol, interval, window_size, required_features)`:
+- reads the latest raw and derived rows for one symbol
+- returns an incomplete window with an explicit gap reason when derived rows are missing
+- returns a complete canonical window only when all required features are present
+
 ### 6.3 Schema Bootstrap
 `initialize_schema(symbols)`:
 - loads the TimescaleDB extension when using PostgreSQL
 - creates the configured schema if needed
-- ensures each requested symbol table exists
-- converts each symbol table into a hypertable
+- ensures each requested raw and feature table exists
+- converts each table into a hypertable
 
 The repository also creates tables lazily during writes, so ingestion can persist a new symbol without a separate migration step.
 
@@ -205,4 +264,4 @@ uv run python -m unittest discover -s tests -t . -v
 ## 11. Next Steps
 1. Add integration tests against a real PostgreSQL + TimescaleDB instance.
 2. Introduce explicit migration support once the schema stabilizes.
-3. Evaluate whether feature rows should live beside raw OHLCV or in separate symbol-scoped tables.
+3. Evaluate whether feature payload JSON should remain the long-term storage shape or be partially normalized for large-scale ML jobs.
