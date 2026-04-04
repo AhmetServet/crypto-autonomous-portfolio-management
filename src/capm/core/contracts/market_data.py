@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol
 
-from capm.domains.market_data import OHLCV
+from capm.domains.market_data import OHLCV, OHLCVFetchPlan
 
 
 class HistoricalMarketDataPort(Protocol):
@@ -31,12 +31,21 @@ class MarketDataRepositoryPort(Protocol):
 
     def get_latest_candle_time(self, symbol: str, interval: str) -> datetime | None:
         """Read the open_time of the latest stored candle for a symbol and interval."""
-        
+
     def get_candles(self, symbol: str, interval: str, start_time: datetime, end_time: datetime) -> list[OHLCV]:
         """Read candles for a given symbol, interval, and exact time window."""
-        
+
+    def plan_candle_fetch(
+        self,
+        symbol: str,
+        interval: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> OHLCVFetchPlan:
+        """Return stored-coverage and missing-gap information for one OHLCV request."""
+
     def get_candle(self, symbol: str, interval: str, open_time: datetime) -> OHLCV | None:
         """Read a single precise candle based on its composite primary key."""
-        
+
     def delete_candles(self, symbol: str, interval: str, start_time: datetime, end_time: datetime) -> int:
         """Delete candles for a given symbol, interval, and time window. Returns number of rows deleted."""

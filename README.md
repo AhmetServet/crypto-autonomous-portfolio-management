@@ -29,6 +29,8 @@ Initialize the CAPM schema before the first ingestion run:
 uv run capm-init-db --symbol BTCUSDT
 ```
 
+Bootstrap now creates the shared `coinpairs`, `ohlcv_coverage`, `feature_coverage`, and `indicator_coverage` tables. Logical symbols are still passed as `BTCUSDT`, but the physical raw/derived tables are created with id-based names such as `coinpair_1_ohlcv` and `coinpair_1_feature`.
+
 ### Fetch OHLC Data
 The CLI currently supports historical OHLCV retrieval from Binance spot demo mode or live mode.
 
@@ -45,6 +47,7 @@ Notes:
 - `--start` is inclusive.
 - `--end` is exclusive.
 - Supported intervals currently include `1s`, `1m`, `3m`, `5m`, `15m`, `30m`, `1h`, `2h`, `4h`, `6h`, `8h`, `12h`, `1d`, `3d`, and `1w`.
+- In repository-backed ingestion flows, stored coverage is checked first so fully covered ranges are served from DB and only missing gaps are fetched from Binance.
 
 ### Tests
 ```bash

@@ -40,7 +40,7 @@ def run_ingestion() -> None:
     # 4. Execute the ingestion flow.
     candles = ingestion_service.fetch_ohlcv(request)
 
-    print(f"Success: fetched and stored {len(candles)} candles in the {request.symbol} table.")
+    print(f"Success: fetched and stored {len(candles)} candles for logical symbol {request.symbol}.")
 
     latest_time = db_repo.get_latest_candle_time(request.symbol, request.interval)
     print(f"Latest stored {request.symbol} {request.interval} candle open_time: {latest_time}")

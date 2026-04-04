@@ -85,6 +85,59 @@ class HistoricalOHLCRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class TimeRange:
+    """Half-open time range used for fetch planning."""
+
+    start_time: datetime
+    end_time: datetime
+
+    def __post_init__(self) -> None:
+        """Validate and normalize the range endpoints."""
+        normalized_start = ensure_utc(self.start_time)
+        normalized_end = ensure_utc(self.end_time)
+        if normalized_start >= normalized_end:
+            raise ValidationError("`start_time` must be earlier than `end_time`.")
+        object.__setattr__(self, "start_time", normalized_start)
+        object.__setattr__(self, "end_time", normalized_end)
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageRange:
+    """Stored coverage metadata for one symbol/interval range."""
+
+    coinpair_id: int
+    table_name: str
+    symbol: str
+    interval: str
+    start_open_time: datetime
+    end_open_time: datetime
+
+    def __post_init__(self) -> None:
+        """Validate and normalize the coverage endpoints."""
+        normalized_symbol = normalize_symbol(self.symbol)
+        normalized_start = ensure_utc(self.start_open_time)
+        normalized_end = ensure_utc(self.end_open_time)
+        if normalized_start > normalized_end:
+            raise ValidationError("`start_open_time` must be earlier than or equal to `end_open_time`.")
+        object.__setattr__(self, "symbol", normalized_symbol)
+        object.__setattr__(self, "start_open_time", normalized_start)
+        object.__setattr__(self, "end_open_time", normalized_end)
+
+
+@dataclass(frozen=True, slots=True)
+class OHLCVFetchPlan:
+    """Coverage-aware read plan for one OHLCV request."""
+
+    covered_ranges: tuple[CoverageRange, ...]
+    missing_ranges: tuple[TimeRange, ...]
+
+    @property
+    def is_fully_covered(self) -> bool:
+        """Return whether the request can be served entirely from storage."""
+        return not self.missing_ranges
+
+
+@dataclass(frozen=True, slots=True)
 class OHLCV:
     """Canonical OHLCV candle used throughout the application."""
 

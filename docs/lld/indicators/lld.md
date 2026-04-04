@@ -284,9 +284,11 @@ Logical key:
 
 Implemented physical direction:
 - keep raw `OHLCV` storage as the source of truth in the existing market-data store
-- persist indicator outputs in a separate symbol-scoped feature table named like `BTCUSDT_features`
+- resolve each logical symbol through the shared `coinpairs` registry
+- persist indicator outputs in an id-based derived table named like `coinpair_<id>_feature`
 - store indicator values in a JSON payload keyed by stable feature names
 - store `is_ready` and `missing_outputs` beside the payload for ML-safe reads
+- maintain `indicator_coverage` for stored derived rows and `feature_coverage` for canonical raw-plus-derived intersections
 - assemble canonical `FeatureRow` objects by merging raw candle data with aligned derived values at read time
 
 Why this is preferred over adding columns directly to raw candle tables:

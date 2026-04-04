@@ -28,7 +28,6 @@ Included in scope:
 
 Out of scope for this module:
 - WebSocket streaming
-- backfill gap detection against stored candles
 - account, balance, or order endpoints
 - signed/private Binance API integration
 - scheduler integration
@@ -98,6 +97,9 @@ Key rules:
 ### 4.4 `services.ingestion.historical.HistoricalMarketDataIngestionService`
 Responsibilities:
 - fetch all candles across a requested time range
+- consult stored OHLCV coverage when a repository is available
+- reuse DB-covered ranges before hitting the exchange
+- fetch only missing gap ranges from the exchange
 - paginate using the exchange port
 - deduplicate candles by `open_time`
 - stop safely if the port returns no more data
@@ -133,21 +135,26 @@ Responsibilities:
 3. `parse_datetime()` converts `--start` and `--end` into UTC-aware datetimes.
 4. `fetch_ohlcv()` builds `BinanceSettings`, `BinanceSpotMarketDataAdapter`, and `HistoricalMarketDataIngestionService`.
 5. `HistoricalOHLCRequest` validates the symbol, interval, and date range.
-6. The ingestion service loops over the requested range page by page.
-7. The adapter calls Binance `/api/v3/klines`.
-8. Binance payload rows are mapped into `OHLCV`.
-9. The service deduplicates candles and advances the pagination cursor.
-10. The final candle list is serialized to JSON and printed.
+6. If a repository is available, the ingestion service asks storage for covered and missing ranges.
+7. Covered ranges are read directly from DB.
+8. Missing ranges are fetched page by page from Binance.
+9. Binance payload rows are mapped into `OHLCV`.
+10. The service deduplicates candles, persists fetched rows, and advances the pagination cursor.
+11. The final candle list is serialized to JSON and printed.
 
-### 5.2 Pagination Algorithm
-The ingestion service uses the request interval to estimate how many candles remain in the range, then requests:
+### 5.2 Gap-Aware Pagination Algorithm
+When a repository is available, the ingestion service first builds a fetch plan from stored coverage metadata:
+- fully covered requests are served entirely from DB
+- partially covered requests are split into DB-covered subranges plus missing gap subranges
+
+Each missing gap then uses the request interval to estimate how many candles remain in the range, then requests:
 
 `limit = min(max_records_per_page, remaining_candles)`
 
 After a page returns:
 - the service sets the next cursor to `last_page_open_time + interval_delta`
 - duplicate `open_time` values are ignored
-- candles outside the requested half-open range `[start_at, end_at)` are skipped
+- candles outside the current missing half-open range `[gap_start, gap_end)` are skipped
 
 Guard condition:
 - if the next cursor does not move forward, the service raises `PaginationError` to avoid an infinite loop
@@ -217,6 +224,8 @@ Current unit tests:
   - multi-page retrieval
   - cursor advancement
   - deduplicated range assembly
+  - full DB hits without exchange fetches
+  - partial coverage with gap-only exchange fetches
 - `tests/unit/test_binance_spot_adapter.py`
   - request construction
   - symbol normalization
@@ -235,7 +244,6 @@ uv run python -m unittest discover -s tests -t . -v
 
 ## 10. Known Limitations
 - no WebSocket stream handling yet
-- no gap-repair against stored historical datasets yet
 - no rate-limit budgeting beyond basic retries
 - no structured logging or metrics yet
 - no integration or contract tests against a live Binance environment
