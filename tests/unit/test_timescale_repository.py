@@ -8,11 +8,11 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import inspect
+from sqlalchemy import inspect, select
 
 from capm.domains.features import ComputedIndicatorSet, GAP_REASON_MISSING_DERIVED_ROWS
 from capm.domains.market_data import OHLCV
-from capm.infra.database.models import get_feature_model, get_ohlcv_model
+from capm.infra.database.models import get_coinpair_model, get_coverage_model, get_feature_model, get_ohlcv_model
 from capm.infra.database.timescale import TimescaleMarketDataRepository
 
 
@@ -73,6 +73,21 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
+    def _coinpair_rows(self) -> list[object]:
+        model = get_coinpair_model(self.repository._schema_name)
+        with self.repository._session_factory() as session:
+            return session.scalars(select(model).order_by(model.id.asc())).all()
+
+    def _coverage_rows(self, table_name: str, *, symbol: str, interval: str) -> list[object]:
+        model = get_coverage_model(table_name, self.repository._schema_name)
+        with self.repository._session_factory() as session:
+            stmt = (
+                select(model)
+                .where(model.symbol == symbol, model.interval == interval)
+                .order_by(model.start_open_time.asc())
+            )
+            return [row.to_domain() for row in session.scalars(stmt).all()]
+
     def test_model_factory_round_trips_domain_entity(self) -> None:
         model = get_ohlcv_model("btc/usdt")
         candle = make_candle(0)
@@ -89,7 +104,7 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
 
         self.assertEqual(mapped.to_domain(), indicator_set)
 
-    def test_repository_creates_symbol_tables_and_reads_back_ranges(self) -> None:
+    def test_repository_creates_id_based_tables_and_reads_back_ranges(self) -> None:
         self.repository.save_ohlcv_batch([make_candle(0), make_candle(1), make_candle(0, symbol="ETHUSDT")])
 
         btc_candles = self.repository.get_candles(
@@ -105,8 +120,14 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
         )
 
         inspector = inspect(self.repository._engine)
-        self.assertTrue(inspector.has_table("BTCUSDT"))
-        self.assertTrue(inspector.has_table("ETHUSDT"))
+        coinpairs = self._coinpair_rows()
+        self.assertEqual([(coinpair.id, coinpair.symbol) for coinpair in coinpairs], [(1, "BTCUSDT"), (2, "ETHUSDT")])
+        self.assertTrue(inspector.has_table("coinpairs"))
+        self.assertTrue(inspector.has_table("ohlcv_coverage"))
+        self.assertTrue(inspector.has_table("feature_coverage"))
+        self.assertTrue(inspector.has_table("indicator_coverage"))
+        self.assertTrue(inspector.has_table("coinpair_1_ohlcv"))
+        self.assertTrue(inspector.has_table("coinpair_2_ohlcv"))
         self.assertEqual([candle.open_time.minute for candle in btc_candles], [0, 1])
         self.assertIsNotNone(eth_candle)
         self.assertEqual(eth_candle.symbol, "ETHUSDT")
@@ -143,6 +164,54 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
         self.assertEqual(latest, datetime(2024, 1, 1, 0, 2, 0, tzinfo=UTC))
         self.assertEqual(deleted, 2)
         self.assertEqual([candle.open_time.minute for candle in remaining], [0])
+
+    def test_repository_merges_adjacent_ohlcv_coverage_rows(self) -> None:
+        self.repository.save_ohlcv_batch([make_candle(0), make_candle(1)])
+        self.repository.save_ohlcv_batch([make_candle(2)])
+
+        coverage_rows = self._coverage_rows("ohlcv_coverage", symbol="BTCUSDT", interval="1m")
+
+        self.assertEqual(len(coverage_rows), 1)
+        self.assertEqual(coverage_rows[0].coinpair_id, 1)
+        self.assertEqual(coverage_rows[0].table_name, "coinpair_1_ohlcv")
+        self.assertEqual(coverage_rows[0].start_open_time, datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC))
+        self.assertEqual(coverage_rows[0].end_open_time, datetime(2024, 1, 1, 0, 2, 0, tzinfo=UTC))
+
+    def test_repository_plans_gaps_from_ohlcv_coverage(self) -> None:
+        self.repository.save_ohlcv_batch([make_candle(0), make_candle(1), make_candle(3), make_candle(4)])
+
+        fetch_plan = self.repository.plan_candle_fetch(
+            "BTCUSDT",
+            "1m",
+            datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+            datetime(2024, 1, 1, 0, 5, 0, tzinfo=UTC),
+        )
+
+        self.assertEqual(
+            [(item.start_open_time.minute, item.end_open_time.minute) for item in fetch_plan.covered_ranges],
+            [(0, 1), (3, 4)],
+        )
+        self.assertEqual(
+            [(item.start_time.minute, item.end_time.minute) for item in fetch_plan.missing_ranges],
+            [(2, 3)],
+        )
+
+    def test_repository_repairs_ohlcv_coverage_after_delete(self) -> None:
+        self.repository.save_ohlcv_batch([make_candle(0), make_candle(1), make_candle(2), make_candle(3)])
+
+        deleted = self.repository.delete_candles(
+            "BTCUSDT",
+            "1m",
+            datetime(2024, 1, 1, 0, 1, 0, tzinfo=UTC),
+            datetime(2024, 1, 1, 0, 2, 0, tzinfo=UTC),
+        )
+        coverage_rows = self._coverage_rows("ohlcv_coverage", symbol="BTCUSDT", interval="1m")
+
+        self.assertEqual(deleted, 1)
+        self.assertEqual(
+            [(row.start_open_time.minute, row.end_open_time.minute) for row in coverage_rows],
+            [(0, 0), (2, 3)],
+        )
 
     def test_repository_ignores_empty_batches(self) -> None:
         self.repository.save_ohlcv_batch([])
@@ -184,6 +253,29 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
         self.assertEqual(latest, datetime(2024, 1, 1, 0, 1, 0, tzinfo=UTC))
         self.assertEqual(deleted, 1)
         self.assertEqual([item.open_time.minute for item in remaining], [0])
+
+    def test_repository_tracks_indicator_and_feature_coverage(self) -> None:
+        self.repository.save_ohlcv_batch([make_candle(0), make_candle(1), make_candle(2)])
+        self.repository.save_indicator_batch([make_indicator_set(1, value="2.0"), make_indicator_set(2, value="3.0")])
+
+        indicator_coverage = self._coverage_rows("indicator_coverage", symbol="BTCUSDT", interval="1m")
+        feature_coverage = self._coverage_rows("feature_coverage", symbol="BTCUSDT", interval="1m")
+
+        self.assertEqual(
+            [(row.start_open_time.minute, row.end_open_time.minute) for row in indicator_coverage],
+            [(1, 2)],
+        )
+        self.assertEqual(
+            [(row.start_open_time.minute, row.end_open_time.minute) for row in feature_coverage],
+            [(1, 2)],
+        )
+
+        self.repository.save_indicator_batch([make_indicator_set(0, value="1.0")])
+        feature_coverage = self._coverage_rows("feature_coverage", symbol="BTCUSDT", interval="1m")
+        self.assertEqual(
+            [(row.start_open_time.minute, row.end_open_time.minute) for row in feature_coverage],
+            [(0, 2)],
+        )
 
     def test_repository_batches_large_indicator_writes(self) -> None:
         repository = TimescaleMarketDataRepository(

@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM model factory for symbol-scoped market and feature tables."""
+"""SQLAlchemy ORM model factory for coinpair-scoped market and feature tables."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from sqlalchemy import Boolean, DateTime, Integer, JSON, Numeric, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from capm.domains.features import ComputedIndicatorSet
+from capm.domains.market_data import CoverageRange
 from capm.domains.market_data.entities import OHLCV, ensure_utc, normalize_symbol
 
 
@@ -71,6 +72,23 @@ class OHLCVModelMixin:
 
 _OHLCV_MODEL_CACHE: dict[tuple[str | None, str], type[Base]] = {}
 _FEATURE_MODEL_CACHE: dict[tuple[str | None, str], type[Base]] = {}
+_COINPAIR_MODEL_CACHE: dict[str | None, type[Base]] = {}
+_COVERAGE_MODEL_CACHE: dict[tuple[str | None, str], type[Base]] = {}
+
+
+def build_ohlcv_table_name(coinpair_id: int) -> str:
+    """Return the physical OHLCV table name for one coinpair id."""
+    return f"coinpair_{coinpair_id}_ohlcv"
+
+
+def build_feature_table_name(coinpair_id: int) -> str:
+    """Return the physical derived-data table name for one coinpair id."""
+    return f"coinpair_{coinpair_id}_feature"
+
+
+def _class_name_fragment(value: str) -> str:
+    """Convert a table name into a deterministic class-name fragment."""
+    return "".join(part.capitalize() for part in value.split("_"))
 
 
 def candle_to_record(entity: OHLCV) -> dict[str, object]:
@@ -147,6 +165,86 @@ class FeatureModelMixin:
         )
 
 
+class CoverageModelMixin:
+    """Shared behavior for coverage metadata models."""
+
+    def to_domain(self) -> CoverageRange:
+        """Convert the SQLAlchemy coverage row into a domain record."""
+        return CoverageRange(
+            coinpair_id=self.coinpair_id,
+            table_name=self.table_name,
+            symbol=self.symbol,
+            interval=self.interval,
+            start_open_time=ensure_utc(self.start_open_time),
+            end_open_time=ensure_utc(self.end_open_time),
+        )
+
+
+def get_coinpair_model(schema_name: str | None = None) -> type[Base]:
+    """Return a cached ORM model for the coinpair registry table."""
+    cached_model = _COINPAIR_MODEL_CACHE.get(schema_name)
+    if cached_model is not None:
+        return cached_model
+
+    annotations = {
+        "id": Mapped[int],
+        "symbol": Mapped[str],
+    }
+    attributes: dict[str, Any] = {
+        "__tablename__": "coinpairs",
+        "__module__": __name__,
+        "__table_args__": {"schema": schema_name} if schema_name else {},
+        "__annotations__": annotations,
+        "id": mapped_column(Integer, primary_key=True, autoincrement=True),
+        "symbol": mapped_column(String(64), nullable=False, unique=True, index=True),
+    }
+
+    model = cast(
+        type[Base],
+        type("CoinpairModel", (Base,), attributes),
+    )
+    _COINPAIR_MODEL_CACHE[schema_name] = model
+    return model
+
+
+def get_coverage_model(table_name: str, schema_name: str | None = None) -> type[Base]:
+    """Return a cached ORM model for one coverage metadata table."""
+    cache_key = (schema_name, table_name)
+    cached_model = _COVERAGE_MODEL_CACHE.get(cache_key)
+    if cached_model is not None:
+        return cached_model
+
+    annotations = {
+        "id": Mapped[int],
+        "coinpair_id": Mapped[int],
+        "table_name": Mapped[str],
+        "symbol": Mapped[str],
+        "interval": Mapped[str],
+        "start_open_time": Mapped[datetime],
+        "end_open_time": Mapped[datetime],
+    }
+    attributes: dict[str, Any] = {
+        "__tablename__": table_name,
+        "__module__": __name__,
+        "__table_args__": {"schema": schema_name} if schema_name else {},
+        "__annotations__": annotations,
+        "id": mapped_column(Integer, primary_key=True, autoincrement=True),
+        "coinpair_id": mapped_column(Integer, nullable=False, index=True),
+        "table_name": mapped_column(String(128), nullable=False),
+        "symbol": mapped_column(String(64), nullable=False, index=True),
+        "interval": mapped_column(String(5), nullable=False, index=True),
+        "start_open_time": mapped_column(DateTime(timezone=True), nullable=False),
+        "end_open_time": mapped_column(DateTime(timezone=True), nullable=False),
+    }
+
+    model = cast(
+        type[Base],
+        type(f"{table_name.title().replace('_', '')}Model", (CoverageModelMixin, Base), attributes),
+    )
+    _COVERAGE_MODEL_CACHE[cache_key] = model
+    return model
+
+
 def indicator_to_record(entity: ComputedIndicatorSet) -> dict[str, object]:
     """Convert a computed indicator row into a database record payload."""
     return {
@@ -158,10 +256,16 @@ def indicator_to_record(entity: ComputedIndicatorSet) -> dict[str, object]:
     }
 
 
-def get_ohlcv_model(symbol: str, schema_name: str | None = None) -> type[Base]:
-    """Return a cached ORM model for the given normalized symbol."""
+def get_ohlcv_model(
+    symbol: str,
+    schema_name: str | None = None,
+    *,
+    table_name: str | None = None,
+) -> type[Base]:
+    """Return a cached ORM model for the given symbol and physical table name."""
     normalized_symbol = normalize_symbol(symbol)
-    cache_key = (schema_name, normalized_symbol)
+    resolved_table_name = table_name or normalized_symbol
+    cache_key = (schema_name, resolved_table_name)
     cached_model = _OHLCV_MODEL_CACHE.get(cache_key)
     if cached_model is not None:
         return cached_model
@@ -181,7 +285,7 @@ def get_ohlcv_model(symbol: str, schema_name: str | None = None) -> type[Base]:
         "taker_buy_quote_asset_volume": Mapped[Decimal],
     }
     attributes: dict[str, Any] = {
-        "__tablename__": normalized_symbol,
+        "__tablename__": resolved_table_name,
         "__module__": __name__,
         "__symbol__": normalized_symbol,
         "__table_args__": {"schema": schema_name} if schema_name else {},
@@ -202,21 +306,26 @@ def get_ohlcv_model(symbol: str, schema_name: str | None = None) -> type[Base]:
 
     model = cast(
         type[Base],
-        type(f"{normalized_symbol}OHLCVModel", (OHLCVModelMixin, Base), attributes),
+        type(f"{_class_name_fragment(resolved_table_name)}OHLCVModel", (OHLCVModelMixin, Base), attributes),
     )
     _OHLCV_MODEL_CACHE[cache_key] = model
     return model
 
 
-def get_feature_model(symbol: str, schema_name: str | None = None) -> type[Base]:
-    """Return a cached ORM model for the given normalized symbol feature table."""
+def get_feature_model(
+    symbol: str,
+    schema_name: str | None = None,
+    *,
+    table_name: str | None = None,
+) -> type[Base]:
+    """Return a cached ORM model for the given symbol derived-data table."""
     normalized_symbol = normalize_symbol(symbol)
-    cache_key = (schema_name, normalized_symbol)
+    resolved_table_name = table_name or f"{normalized_symbol}_features"
+    cache_key = (schema_name, resolved_table_name)
     cached_model = _FEATURE_MODEL_CACHE.get(cache_key)
     if cached_model is not None:
         return cached_model
 
-    table_name = f"{normalized_symbol}_features"
     annotations = {
         "interval": Mapped[str],
         "open_time": Mapped[datetime],
@@ -225,7 +334,7 @@ def get_feature_model(symbol: str, schema_name: str | None = None) -> type[Base]
         "missing_outputs": Mapped[list[str]],
     }
     attributes: dict[str, Any] = {
-        "__tablename__": table_name,
+        "__tablename__": resolved_table_name,
         "__module__": __name__,
         "__symbol__": normalized_symbol,
         "__table_args__": {"schema": schema_name} if schema_name else {},
@@ -239,7 +348,7 @@ def get_feature_model(symbol: str, schema_name: str | None = None) -> type[Base]
 
     model = cast(
         type[Base],
-        type(f"{normalized_symbol}FeatureModel", (FeatureModelMixin, Base), attributes),
+        type(f"{_class_name_fragment(resolved_table_name)}FeatureModel", (FeatureModelMixin, Base), attributes),
     )
     _FEATURE_MODEL_CACHE[cache_key] = model
     return model

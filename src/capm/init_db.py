@@ -28,17 +28,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--symbol",
         action="append",
         default=[],
-        help="Trading pair to initialize as a dedicated table, e.g. BTCUSDT.",
+        help="Logical trading pair to initialize with id-based physical tables, e.g. BTCUSDT.",
     )
     return parser
 
 
 def main() -> None:
-    """Bootstrap the configured CAPM schema and optional symbol tables."""
+    """Bootstrap the configured CAPM schema and optional logical symbol tables."""
     args = build_parser().parse_args()
     database_settings = DatabaseSettings.from_env()
     repository = initialize_database(args.symbol)
-    initialized = ", ".join(args.symbol) if args.symbol else "no symbol tables"
+    initialized = ", ".join(args.symbol) if args.symbol else "no logical symbols"
     print(
         "Schema bootstrap completed for "
         f"{database_settings.schema_name} in "

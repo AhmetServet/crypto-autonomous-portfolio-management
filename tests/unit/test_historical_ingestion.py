@@ -6,7 +6,7 @@ import unittest
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from capm.domains.market_data import HistoricalOHLCRequest, OHLCV
+from capm.domains.market_data import CoverageRange, HistoricalOHLCRequest, OHLCV, OHLCVFetchPlan, TimeRange
 from capm.services.ingestion import HistoricalMarketDataIngestionService
 
 
@@ -46,14 +46,23 @@ class FakeHistoricalMarketDataPort:
 class FakeMarketDataRepository:
     """Test double that captures persisted candle batches."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        stored_candles: list[OHLCV] | None = None,
+        fetch_plan: OHLCVFetchPlan | None = None,
+    ) -> None:
         self.saved_batches: list[list[OHLCV]] = []
+        self.stored_candles = list(stored_candles or [])
+        self.fetch_plan = fetch_plan
 
     def save_ohlcv_batch(self, candles: list[OHLCV]) -> None:
         self.saved_batches.append(list(candles))
+        self.stored_candles.extend(candles)
 
     def get_latest_candle_time(self, symbol: str, interval: str) -> datetime | None:
-        raise NotImplementedError
+        matching = [candle.open_time for candle in self.stored_candles if candle.symbol == symbol and candle.interval == interval]
+        return max(matching) if matching else None
 
     def get_candles(
         self,
@@ -62,10 +71,34 @@ class FakeMarketDataRepository:
         start_time: datetime,
         end_time: datetime,
     ) -> list[OHLCV]:
-        raise NotImplementedError
+        return [
+            candle
+            for candle in self.stored_candles
+            if candle.symbol == symbol
+            and candle.interval == interval
+            and candle.open_time >= start_time
+            and candle.open_time < end_time
+        ]
+
+    def plan_candle_fetch(
+        self,
+        symbol: str,
+        interval: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> OHLCVFetchPlan:
+        if self.fetch_plan is not None:
+            return self.fetch_plan
+        return OHLCVFetchPlan(
+            covered_ranges=(),
+            missing_ranges=(TimeRange(start_time, end_time),),
+        )
 
     def get_candle(self, symbol: str, interval: str, open_time: datetime) -> OHLCV | None:
-        raise NotImplementedError
+        for candle in self.stored_candles:
+            if candle.symbol == symbol and candle.interval == interval and candle.open_time == open_time:
+                return candle
+        return None
 
     def delete_candles(
         self,
@@ -136,6 +169,89 @@ class HistoricalMarketDataIngestionServiceTests(unittest.TestCase):
         self.assertEqual(
             [candle.open_time.minute for candle in repository.saved_batches[0]],
             [0, 1],
+        )
+
+    def test_service_uses_db_only_when_request_is_fully_covered(self) -> None:
+        repository = FakeMarketDataRepository(
+            stored_candles=[make_candle(0), make_candle(1)],
+            fetch_plan=OHLCVFetchPlan(
+                covered_ranges=(
+                    CoverageRange(
+                        coinpair_id=1,
+                        table_name="coinpair_1_ohlcv",
+                        symbol="BTCUSDT",
+                        interval="1m",
+                        start_open_time=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                        end_open_time=datetime(2024, 1, 1, 0, 1, 0, tzinfo=UTC),
+                    ),
+                ),
+                missing_ranges=(),
+            ),
+        )
+        port = FakeHistoricalMarketDataPort(pages=[])
+        service = HistoricalMarketDataIngestionService(
+            market_data_port=port,
+            repository_port=repository,
+        )
+
+        candles = service.fetch_ohlcv(
+            HistoricalOHLCRequest(
+                symbol="BTCUSDT",
+                interval="1m",
+                start_at=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                end_at=datetime(2024, 1, 1, 0, 2, 0, tzinfo=UTC),
+            )
+        )
+
+        self.assertEqual([candle.open_time.minute for candle in candles], [0, 1])
+        self.assertEqual(port.calls, [])
+        self.assertEqual(repository.saved_batches, [])
+
+    def test_service_fetches_only_missing_gap_when_db_is_partially_covered(self) -> None:
+        repository = FakeMarketDataRepository(
+            stored_candles=[make_candle(0), make_candle(1)],
+            fetch_plan=OHLCVFetchPlan(
+                covered_ranges=(
+                    CoverageRange(
+                        coinpair_id=1,
+                        table_name="coinpair_1_ohlcv",
+                        symbol="BTCUSDT",
+                        interval="1m",
+                        start_open_time=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                        end_open_time=datetime(2024, 1, 1, 0, 1, 0, tzinfo=UTC),
+                    ),
+                ),
+                missing_ranges=(
+                    TimeRange(
+                        datetime(2024, 1, 1, 0, 2, 0, tzinfo=UTC),
+                        datetime(2024, 1, 1, 0, 4, 0, tzinfo=UTC),
+                    ),
+                ),
+            ),
+        )
+        port = FakeHistoricalMarketDataPort(pages=[[make_candle(2), make_candle(3)]])
+        service = HistoricalMarketDataIngestionService(
+            market_data_port=port,
+            repository_port=repository,
+        )
+
+        candles = service.fetch_ohlcv(
+            HistoricalOHLCRequest(
+                symbol="BTCUSDT",
+                interval="1m",
+                start_at=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                end_at=datetime(2024, 1, 1, 0, 4, 0, tzinfo=UTC),
+            )
+        )
+
+        self.assertEqual([candle.open_time.minute for candle in candles], [0, 1, 2, 3])
+        self.assertEqual(len(port.calls), 1)
+        self.assertEqual(port.calls[0]["start_at"], datetime(2024, 1, 1, 0, 2, 0, tzinfo=UTC))
+        self.assertEqual(port.calls[0]["end_at"], datetime(2024, 1, 1, 0, 4, 0, tzinfo=UTC))
+        self.assertEqual(len(repository.saved_batches), 1)
+        self.assertEqual(
+            [candle.open_time.minute for candle in repository.saved_batches[0]],
+            [2, 3],
         )
 
 
