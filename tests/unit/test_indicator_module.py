@@ -93,6 +93,15 @@ class FakeFeatureRepository:
     def save_indicator_batch(self, records: list[object]) -> None:
         self.saved_batches.append(list(records))
 
+    def get_latest_indicator_time(self, symbol: str, interval: str) -> datetime | None:
+        matching = [
+            record.open_time
+            for batch in self.saved_batches
+            for record in batch
+            if record.symbol == symbol and record.interval == interval
+        ]
+        return max(matching) if matching else None
+
     def get_indicator_batch(
         self,
         symbol: str,
@@ -315,6 +324,32 @@ class IndicatorPipelineServiceTests(unittest.TestCase):
         self.assertEqual(result.indicator_rows_persisted, 10)
         self.assertIsNotNone(row)
         self.assertEqual(row.values["sma_3_close"], Decimal("4"))
+
+    def test_backfill_feature_range_batches_persistence_across_chunks(self) -> None:
+        candles = [make_candle(index, close=str(index + 1)) for index in range(10)]
+        feature_repository = FakeFeatureRepository()
+        service = IndicatorPipelineService(
+            market_data_repository=FakeMarketDataRepository(candles),
+            feature_repository=feature_repository,
+            persist_batch_indicator_count=4,
+        )
+
+        result = service.backfill_feature_range(
+            symbol="BTCUSDT",
+            interval="1m",
+            start_time=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+            end_time=datetime(2024, 1, 1, 0, 10, 0, tzinfo=UTC),
+            indicator_specs=(IndicatorSpec(name="", kind="sma", parameters={"period": 3}),),
+            chunk_candle_count=2,
+            resume_from_latest=False,
+        )
+
+        self.assertEqual(result.indicator_rows_persisted, 10)
+        self.assertEqual(len(feature_repository.saved_batches), 3)
+        self.assertEqual(
+            [len(batch) for batch in feature_repository.saved_batches],
+            [4, 4, 2],
+        )
 
     def test_backfill_feature_range_resumes_from_latest_persisted_timestamp(self) -> None:
         temp_dir = tempfile.TemporaryDirectory()

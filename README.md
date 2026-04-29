@@ -30,6 +30,12 @@ Create a local environment file before running the storage example:
 cp .env.example .env
 ```
 
+For large backfills on smaller Postgres instances, these optional settings can reduce write pressure and keep SQLAlchemy errors compact:
+```bash
+CAPM_DATABASE_OHLCV_WRITE_BATCH_SIZE=500
+CAPM_DATABASE_HIDE_SQL_PARAMETERS=true
+```
+
 Initialize the CAPM schema before the first ingestion run:
 ```bash
 uv run capm-init-db --symbol BTCUSDT
