@@ -91,6 +91,8 @@ class DatabaseSettings:
 
     connection_string: str
     schema_name: str = "capm"
+    ohlcv_write_batch_size: int = 500
+    hide_sql_parameters: bool = True
 
     def __post_init__(self) -> None:
         """Validate the settings payload."""
@@ -98,6 +100,8 @@ class DatabaseSettings:
             raise ConfigurationError("Database connection string cannot be empty.")
         if not self.schema_name.strip():
             raise ConfigurationError("Database schema name cannot be empty.")
+        if self.ohlcv_write_batch_size < 1:
+            raise ConfigurationError("OHLCV write batch size must be at least one.")
 
     @classmethod
     def from_env(cls, *, env_file: str | None = None) -> "DatabaseSettings":
@@ -109,4 +113,16 @@ class DatabaseSettings:
             or ""
         ).strip()
         schema_name = os.getenv("CAPM_DATABASE_SCHEMA", "capm").strip()
-        return cls(connection_string=connection_string, schema_name=schema_name)
+        ohlcv_write_batch_size = int(os.getenv("CAPM_DATABASE_OHLCV_WRITE_BATCH_SIZE", "500"))
+        hide_sql_parameters = os.getenv("CAPM_DATABASE_HIDE_SQL_PARAMETERS", "true").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        return cls(
+            connection_string=connection_string,
+            schema_name=schema_name,
+            ohlcv_write_batch_size=ohlcv_write_batch_size,
+            hide_sql_parameters=hide_sql_parameters,
+        )

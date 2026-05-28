@@ -63,6 +63,12 @@ class IndicatorPipelineService:
     market_data_repository: MarketDataRepositoryPort
     feature_repository: FeatureRepositoryPort | None = None
     feature_window_reader: FeatureWindowReadPort | None = None
+    persist_batch_indicator_count: int = 10_000
+
+    def __post_init__(self) -> None:
+        """Validate persistence buffer settings."""
+        if self.persist_batch_indicator_count < 1:
+            raise ValueError("`persist_batch_indicator_count` must be positive.")
 
     def compute_feature_batch(
         self,
@@ -219,6 +225,15 @@ class IndicatorPipelineService:
         candles_read = 0
         indicator_rows_persisted = 0
         last_persisted_open_time = latest_persisted_time
+        pending_indicator_sets: list[ComputedIndicatorSet] = []
+
+        def flush_pending_indicator_sets() -> None:
+            nonlocal last_persisted_open_time, pending_indicator_sets
+            if not pending_indicator_sets:
+                return
+            self.feature_repository.save_indicator_batch(pending_indicator_sets)
+            last_persisted_open_time = pending_indicator_sets[-1].open_time
+            pending_indicator_sets = []
 
         while cursor < normalized_end_time:
             chunk_end_time = min(
@@ -246,9 +261,10 @@ class IndicatorPipelineService:
                     if indicator_set.open_time >= cursor
                 ]
                 if persisted_indicator_sets:
-                    self.feature_repository.save_indicator_batch(persisted_indicator_sets)
-                    last_persisted_open_time = persisted_indicator_sets[-1].open_time
+                    pending_indicator_sets.extend(persisted_indicator_sets)
                     indicator_rows_persisted += len(persisted_indicator_sets)
+                    if len(pending_indicator_sets) >= self.persist_batch_indicator_count:
+                        flush_pending_indicator_sets()
 
             chunks_processed += 1
             if progress_callback is not None:
@@ -263,6 +279,8 @@ class IndicatorPipelineService:
                     )
                 )
             cursor = chunk_end_time
+
+        flush_pending_indicator_sets()
 
         return FeatureBackfillResult(
             requested_start_time=normalized_start_time,

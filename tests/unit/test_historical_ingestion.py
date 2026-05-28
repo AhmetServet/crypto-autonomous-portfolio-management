@@ -171,6 +171,37 @@ class HistoricalMarketDataIngestionServiceTests(unittest.TestCase):
             [0, 1],
         )
 
+    def test_service_batches_persistence_across_multiple_exchange_pages(self) -> None:
+        port = FakeHistoricalMarketDataPort(
+            pages=[
+                [make_candle(0), make_candle(1)],
+                [make_candle(2), make_candle(3)],
+                [make_candle(4), make_candle(5)],
+            ]
+        )
+        repository = FakeMarketDataRepository()
+        service = HistoricalMarketDataIngestionService(
+            market_data_port=port,
+            repository_port=repository,
+            persist_batch_candle_count=4,
+        )
+
+        candles = service.fetch_ohlcv(
+            HistoricalOHLCRequest(
+                symbol="BTCUSDT",
+                interval="1m",
+                start_at=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                end_at=datetime(2024, 1, 1, 0, 6, 0, tzinfo=UTC),
+            )
+        )
+
+        self.assertEqual([candle.open_time.minute for candle in candles], [0, 1, 2, 3, 4, 5])
+        self.assertEqual(len(repository.saved_batches), 2)
+        self.assertEqual(
+            [[candle.open_time.minute for candle in batch] for batch in repository.saved_batches],
+            [[0, 1, 2, 3], [4, 5]],
+        )
+
     def test_service_uses_db_only_when_request_is_fully_covered(self) -> None:
         repository = FakeMarketDataRepository(
             stored_candles=[make_candle(0), make_candle(1)],
@@ -252,6 +283,107 @@ class HistoricalMarketDataIngestionServiceTests(unittest.TestCase):
         self.assertEqual(
             [candle.open_time.minute for candle in repository.saved_batches[0]],
             [2, 3],
+        )
+
+    def test_service_invokes_fetch_progress_after_each_exchange_page(self) -> None:
+        port = FakeHistoricalMarketDataPort(
+            pages=[
+                [make_candle(0), make_candle(1)],
+                [make_candle(2)],
+            ]
+        )
+        service = HistoricalMarketDataIngestionService(market_data_port=port)
+        progress_calls = 0
+
+        def tally(_completed: int, _total: int, _at: datetime) -> None:
+            nonlocal progress_calls
+            progress_calls += 1
+
+        service.fetch_ohlcv(
+            HistoricalOHLCRequest(
+                symbol="BTC/USDT",
+                interval="1m",
+                start_at=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                end_at=datetime(2024, 1, 5, 0, 0, 0, tzinfo=UTC),
+            ),
+            on_fetch_progress=tally,
+        )
+
+        self.assertEqual(progress_calls, 2)
+
+    def test_service_reports_fetch_progress_when_range_is_fully_in_db(self) -> None:
+        repository = FakeMarketDataRepository(
+            stored_candles=[make_candle(0), make_candle(1)],
+            fetch_plan=OHLCVFetchPlan(
+                covered_ranges=(
+                    CoverageRange(
+                        coinpair_id=1,
+                        table_name="coinpair_1_ohlcv",
+                        symbol="BTCUSDT",
+                        interval="1m",
+                        start_open_time=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                        end_open_time=datetime(2024, 1, 1, 0, 1, 0, tzinfo=UTC),
+                    ),
+                ),
+                missing_ranges=(),
+            ),
+        )
+        port = FakeHistoricalMarketDataPort(pages=[])
+        service = HistoricalMarketDataIngestionService(
+            market_data_port=port,
+            repository_port=repository,
+        )
+        progress_calls = 0
+
+        def tally(_completed: int, _total: int, _at: datetime) -> None:
+            nonlocal progress_calls
+            progress_calls += 1
+
+        service.fetch_ohlcv(
+            HistoricalOHLCRequest(
+                symbol="BTCUSDT",
+                interval="1m",
+                start_at=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                end_at=datetime(2024, 1, 1, 0, 2, 0, tzinfo=UTC),
+            ),
+            on_fetch_progress=tally,
+        )
+
+        self.assertEqual(progress_calls, 1)
+
+    def test_ingest_ohlcv_persists_missing_rows_without_returning_candles(self) -> None:
+        repository = FakeMarketDataRepository(
+            fetch_plan=OHLCVFetchPlan(
+                covered_ranges=(),
+                missing_ranges=(
+                    TimeRange(
+                        datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                        datetime(2024, 1, 1, 0, 3, 0, tzinfo=UTC),
+                    ),
+                ),
+            )
+        )
+        port = FakeHistoricalMarketDataPort(pages=[[make_candle(0), make_candle(1)], [make_candle(2)]])
+        service = HistoricalMarketDataIngestionService(
+            market_data_port=port,
+            repository_port=repository,
+            persist_batch_candle_count=2,
+        )
+
+        result = service.ingest_ohlcv(
+            HistoricalOHLCRequest(
+                symbol="BTCUSDT",
+                interval="1m",
+                start_at=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                end_at=datetime(2024, 1, 1, 0, 3, 0, tzinfo=UTC),
+            )
+        )
+
+        self.assertEqual(result.fetched_count, 3)
+        self.assertEqual(result.stored_count, 3)
+        self.assertEqual(
+            [[candle.open_time.minute for candle in batch] for batch in repository.saved_batches],
+            [[0, 1], [2]],
         )
 
 

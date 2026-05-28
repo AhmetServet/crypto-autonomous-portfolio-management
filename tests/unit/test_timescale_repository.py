@@ -218,6 +218,23 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
 
         self.assertIsNone(self.repository.get_latest_candle_time("BTCUSDT", "1m"))
 
+    def test_repository_batches_large_ohlcv_writes(self) -> None:
+        repository = TimescaleMarketDataRepository(
+            str(self.repository._engine.url),
+            ohlcv_write_batch_size=2,
+        )
+        candles = [make_candle(minute, close=str(minute + 1)) for minute in range(5)]
+
+        repository.save_ohlcv_batch(candles)
+
+        stored = repository.get_candles(
+            "BTCUSDT",
+            "1m",
+            datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+            datetime(2024, 1, 1, 0, 5, 0, tzinfo=UTC),
+        )
+        self.assertEqual([item.open_time.minute for item in stored], [0, 1, 2, 3, 4])
+
     def test_repository_crud_for_indicator_rows(self) -> None:
         record = make_indicator_set(0, value="2.1")
         updated = make_indicator_set(0, value="9.9")

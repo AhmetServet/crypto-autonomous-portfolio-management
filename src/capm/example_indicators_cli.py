@@ -14,6 +14,15 @@ from capm.services.features import IndicatorPipelineService
 from capm.services.ingestion import HistoricalMarketDataIngestionService
 
 
+def _print_fetch_progress(completed_days: int, total_days: int, at: datetime) -> None:
+    """Show one-line fetch progress (overwrites the same line)."""
+    print(
+        f"\rFetch: {completed_days}/{total_days} days completed (through {at:%Y-%m-%d %H:%M}Z)",
+        end="",
+        flush=True,
+    )
+
+
 def build_indicator_specs() -> tuple[IndicatorSpec, ...]:
     """Return the built-in indicators used in the end-to-end example."""
     return (
@@ -62,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--chunk-candle-count",
         type=int,
-        default=2000,
+        default=10000,
         help="How many candles to compute and persist per feature chunk.",
     )
     return parser
@@ -104,10 +113,11 @@ def run_indicator_example_1y(
         f"from {start_time.isoformat()} to {end_time.isoformat()}..."
     )
     try:
-        candles = ingestion_service.fetch_ohlcv(request)
+        candles = ingestion_service.fetch_ohlcv(request, on_fetch_progress=_print_fetch_progress)
     finally:
         adapter.close()
 
+    print()
     fetched_count = len(candles)
     del candles
     print(f"Stored {fetched_count} raw candles in the database.")

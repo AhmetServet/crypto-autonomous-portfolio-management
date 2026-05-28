@@ -53,17 +53,24 @@ class TimescaleMarketDataRepository:
         connection_string: str,
         schema_name: str | None = None,
         *,
+        ohlcv_write_batch_size: int | None = 500,
         feature_write_batch_size: int = 1000,
+        hide_sql_parameters: bool = True,
     ) -> None:
         """Initialize the repository by creating the SQLAlchemy engine."""
         if connection_string.startswith("postgresql://"):
             connection_string = connection_string.replace("postgresql://", "postgresql+psycopg://", 1)
 
-        self._engine = create_engine(connection_string, pool_pre_ping=True)
+        self._engine = create_engine(
+            connection_string,
+            pool_pre_ping=True,
+            hide_parameters=hide_sql_parameters,
+        )
         self._session_factory = sessionmaker(bind=self._engine, autoflush=False)
         self._schema_name = (
             schema_name.strip() if schema_name and self._engine.dialect.name == "postgresql" else None
         )
+        self._ohlcv_write_batch_size = ohlcv_write_batch_size
         self._feature_write_batch_size = feature_write_batch_size
         self._initialized_tables: set[str] = set()
         self._coinpair_model = get_coinpair_model(self._schema_name)
@@ -248,8 +255,8 @@ class TimescaleMarketDataRepository:
         """Persist a grouped batch using upsert or merge semantics."""
         for symbol, symbol_records in records_by_symbol.items():
             model = model_resolver(symbol)
-            for batch in self._batched(symbol_records, batch_size):
-                with self._session_factory() as session:
+            with self._session_factory() as session:
+                for batch in self._batched(symbol_records, batch_size):
                     if self._engine.dialect.name == "postgresql":
                         values = [payload_builder(record) for record in batch]
                         stmt = pg_insert(model).values(values)
@@ -266,7 +273,7 @@ class TimescaleMarketDataRepository:
                     else:
                         for record in batch:
                             session.merge(model.from_domain(record))
-                    session.commit()
+                session.commit()
 
     @staticmethod
     def _batched(records: list[Any], batch_size: int | None) -> Iterable[list[Any]]:
@@ -541,6 +548,7 @@ class TimescaleMarketDataRepository:
             records_by_symbol=candles_by_symbol,
             model_resolver=self._ensure_market_table,
             payload_builder=candle_to_record,
+            batch_size=self._ohlcv_write_batch_size,
         )
 
         for (symbol, interval), interval_candles in candles_by_symbol_interval.items():
