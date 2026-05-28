@@ -14,6 +14,16 @@ from capm.domains.market_data import HistoricalOHLCRequest, OHLCV
 FetchProgressCallback = Callable[[int, int, datetime], None]
 
 
+@dataclass(frozen=True, slots=True)
+class IngestionResult:
+    """Summary for write-oriented ingestion flows."""
+
+    fetched_count: int
+    stored_count: int
+    started_at: datetime
+    ended_at: datetime
+
+
 def _fetch_day_progress(request: HistoricalOHLCRequest, cursor: datetime) -> tuple[int, int]:
     """Map cursor position within the request window to completed/total day counts for progress UI."""
     start, end = request.start_at, request.end_at
@@ -89,6 +99,45 @@ class HistoricalMarketDataIngestionService:
 
         return candles
 
+    def ingest_ohlcv(
+        self,
+        request: HistoricalOHLCRequest,
+        *,
+        on_fetch_progress: FetchProgressCallback | None = None,
+    ) -> IngestionResult:
+        """Persist missing candles for a request without returning the full candle set."""
+        if self.repository_port is None:
+            raise ValueError("`repository_port` is required for write-oriented ingestion.")
+
+        fetch_plan = self.repository_port.plan_candle_fetch(
+            request.symbol,
+            request.interval,
+            request.start_at,
+            request.end_at,
+        )
+        fetched_count = 0
+        stored_count = 0
+        for missing_range in fetch_plan.missing_ranges:
+            result = self._fetch_gap_to_repository(
+                request,
+                missing_range.start_time,
+                missing_range.end_time,
+                on_fetch_progress,
+            )
+            fetched_count += result.fetched_count
+            stored_count += result.stored_count
+
+        if on_fetch_progress is not None and not fetch_plan.missing_ranges:
+            completed_days, total_days = _fetch_day_progress(request, request.end_at)
+            on_fetch_progress(completed_days, total_days, request.end_at)
+
+        return IngestionResult(
+            fetched_count=fetched_count,
+            stored_count=stored_count,
+            started_at=request.start_at,
+            ended_at=request.end_at,
+        )
+
     def _fetch_gap_into_cache(
         self,
         request: HistoricalOHLCRequest,
@@ -145,3 +194,72 @@ class HistoricalMarketDataIngestionService:
 
         if self.repository_port is not None and pending_persist_batch:
             self.repository_port.save_ohlcv_batch(pending_persist_batch)
+
+    def _fetch_gap_to_repository(
+        self,
+        request: HistoricalOHLCRequest,
+        start_time: datetime,
+        end_time: datetime,
+        on_fetch_progress: FetchProgressCallback | None,
+    ) -> IngestionResult:
+        """Fetch one missing gap from the exchange and persist it without a read cache."""
+        if self.repository_port is None:
+            raise ValueError("`repository_port` is required for write-oriented ingestion.")
+
+        cursor = start_time
+        fetched_count = 0
+        stored_count = 0
+        pending_persist_batch: list[OHLCV] = []
+        last_open_time: datetime | None = None
+
+        while cursor < end_time:
+            remaining = end_time - cursor
+            remaining_candles = max(1, math.ceil(remaining / request.interval_delta))
+            limit = min(request.max_records_per_page, remaining_candles)
+
+            page = self.market_data_port.fetch_ohlcv_page(
+                symbol=request.symbol,
+                interval=request.interval,
+                start_at=cursor,
+                end_at=end_time,
+                limit=limit,
+            )
+            if not page:
+                break
+
+            next_cursor = page[-1].open_time + request.interval_delta
+            if next_cursor <= cursor:
+                raise PaginationError(
+                    "Historical market-data pagination did not advance. "
+                    "Refusing to continue to avoid an infinite loop."
+                )
+
+            for candle in page:
+                if candle.open_time < start_time or candle.open_time >= end_time:
+                    continue
+                if last_open_time is not None and candle.open_time <= last_open_time:
+                    continue
+                last_open_time = candle.open_time
+                pending_persist_batch.append(candle)
+                fetched_count += 1
+                if len(pending_persist_batch) >= self.persist_batch_candle_count:
+                    self.repository_port.save_ohlcv_batch(pending_persist_batch)
+                    stored_count += len(pending_persist_batch)
+                    pending_persist_batch = []
+
+            cursor = next_cursor
+            if on_fetch_progress is not None:
+                completed_days, total_days = _fetch_day_progress(request, cursor)
+                progress_at = min(cursor, request.end_at)
+                on_fetch_progress(completed_days, total_days, progress_at)
+
+        if pending_persist_batch:
+            self.repository_port.save_ohlcv_batch(pending_persist_batch)
+            stored_count += len(pending_persist_batch)
+
+        return IngestionResult(
+            fetched_count=fetched_count,
+            stored_count=stored_count,
+            started_at=start_time,
+            ended_at=end_time,
+        )

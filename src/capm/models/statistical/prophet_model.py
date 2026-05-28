@@ -23,6 +23,13 @@ from capm.domains.prediction import (
 )
 
 
+def _to_prophet_timestamp(timestamp: Any) -> Any:
+    """Return a timezone-naive UTC timestamp for Prophet's `ds` column."""
+    if pd is None:
+        return timestamp
+    return pd.Timestamp(timestamp).tz_convert("UTC").tz_localize(None)
+
+
 @dataclass(slots=True)
 class ProphetForecastingModel:
     """Fits and predicts with Facebook Prophet."""
@@ -44,7 +51,7 @@ class ProphetForecastingModel:
 
         frame = pd.DataFrame(
             {
-                "ds": list(training_input.timestamps),
+                "ds": [_to_prophet_timestamp(timestamp) for timestamp in training_input.timestamps],
                 "y": list(training_input.target_values),
             }
         )
@@ -64,7 +71,7 @@ class ProphetForecastingModel:
         if not isinstance(prediction_input, StatisticalPredictionInput):
             raise DatasetAdaptationError("Prophet expects a statistical prediction input.")
 
-        future = pd.DataFrame({"ds": [prediction_input.prediction_time]})
+        future = pd.DataFrame({"ds": [_to_prophet_timestamp(prediction_input.prediction_time)]})
         forecast = self._model.predict(future)
         predicted_value = float(forecast["yhat"].iloc[-1])
         return predicted_value, {

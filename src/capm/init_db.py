@@ -25,7 +25,7 @@ def initialize_database(symbols: Sequence[str] | None = None) -> TimescaleMarket
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the database bootstrap argument parser."""
-    parser = argparse.ArgumentParser(prog="capm-init-db")
+    parser = argparse.ArgumentParser(prog="capm init-db")
     parser.add_argument(
         "--symbol",
         action="append",

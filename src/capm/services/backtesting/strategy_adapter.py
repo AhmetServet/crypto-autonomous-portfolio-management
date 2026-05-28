@@ -30,7 +30,10 @@ if bt is not None:  # pragma: no branch - exercised only when dependency is inst
     class PredictionSignalStrategy(bt.Strategy):
         """Applies deterministic buy/sell/hold actions from forecast signals."""
 
-        params = (("signal_map", {}),)
+        params = (
+            ("signal_map", {}),
+            ("cash_fraction", 0.95),
+        )
 
         def __init__(self) -> None:
             self.equity_curve: list[float] = []
@@ -40,7 +43,11 @@ if bt is not None:  # pragma: no branch - exercised only when dependency is inst
             open_time = bt.num2date(self.data.datetime[0]).replace(tzinfo=None)
             action = self.params.signal_map.get(open_time)
             if action == "buy" and not self.position:
-                self.buy()
+                cash_to_deploy = float(self.broker.getcash()) * float(self.params.cash_fraction)
+                if cash_to_deploy <= 0:
+                    return
+                size = cash_to_deploy / float(self.data.close[0])
+                self.buy(size=size)
             elif action == "sell" and self.position:
                 self.close()
             self.equity_curve.append(float(self.broker.getvalue()))

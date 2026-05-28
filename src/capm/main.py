@@ -6,10 +6,13 @@ import argparse
 import json
 from datetime import UTC, datetime
 
-from capm.core.config import BinanceSettings
+from capm.core.config import BinanceSettings, DatabaseSettings
 from capm.domains.market_data import HistoricalOHLCRequest
+from capm.init_db import initialize_database
+from capm.infra.database.timescale import TimescaleMarketDataRepository
 from capm.infra.exchange import BinanceSpotMarketDataAdapter
-from capm.services.ingestion import HistoricalMarketDataIngestionService
+from capm.services.ingestion import BinancePublicDumpIngestionService, HistoricalMarketDataIngestionService
+from capm.services.prediction_runtime import PredictionRuntimeService
 
 
 def parse_datetime(value: str) -> datetime:
@@ -48,10 +51,37 @@ def fetch_ohlcv(
         adapter.close()
 
 
+def build_repository() -> TimescaleMarketDataRepository:
+    """Build the configured database repository."""
+    settings = DatabaseSettings.from_env()
+    return TimescaleMarketDataRepository(
+        settings.connection_string,
+        schema_name=settings.schema_name,
+        ohlcv_write_batch_size=settings.ohlcv_write_batch_size,
+        hide_sql_parameters=settings.hide_sql_parameters,
+    )
+
+
+def print_json(payload: dict[str, object]) -> None:
+    """Print a JSON response payload."""
+    print(json.dumps(payload, indent=2, default=str))
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the CAPM CLI argument parser."""
     parser = argparse.ArgumentParser(prog="capm")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    init_parser = subparsers.add_parser(
+        "init-db",
+        help="Initialize CAPM database schema and optional symbol tables.",
+    )
+    init_parser.add_argument(
+        "--symbol",
+        action="append",
+        default=[],
+        help="Trading pair to initialize, e.g. BTCUSDT. Can be passed more than once.",
+    )
 
     fetch_parser = subparsers.add_parser(
         "fetch-ohlc",
@@ -75,6 +105,57 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["demo", "live"],
         help="Binance environment to query.",
     )
+    fetch_parser.add_argument(
+        "--persist",
+        action="store_true",
+        help="Persist missing candles to the configured database instead of only printing JSON.",
+    )
+    fetch_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=10_000,
+        help="Number of candles to write per ingestion batch when --persist is used.",
+    )
+
+    ingest_parser = subparsers.add_parser(
+        "ingest-ohlcv",
+        help="Ingest OHLCV candles into the configured database.",
+    )
+    ingest_parser.add_argument("--symbol", required=True, help="Trading pair, e.g. BTCUSDT.")
+    ingest_parser.add_argument("--interval", required=True, help="Binance kline interval.")
+    ingest_parser.add_argument("--start", required=True, help="Inclusive start datetime in ISO-8601 format.")
+    ingest_parser.add_argument("--end", required=True, help="Exclusive end datetime in ISO-8601 format.")
+    ingest_parser.add_argument(
+        "--source",
+        default="dump-with-rest-tail",
+        choices=["rest", "dump", "dump-with-rest-tail"],
+        help="Historical data source.",
+    )
+    ingest_parser.add_argument(
+        "--mode",
+        default="live",
+        choices=["demo", "live"],
+        help="Binance REST environment for REST ingestion or dump gap filling.",
+    )
+    ingest_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=50_000,
+        help="Number of candles to write per ingestion batch.",
+    )
+
+    predict_parser = subparsers.add_parser(
+        "predict",
+        help="Run one prediction from a persisted model artifact and DB-backed latest data.",
+    )
+    predict_parser.add_argument("--model-artifact", required=True, help="Path to model.pkl or trained_models.pkl.")
+    predict_parser.add_argument("--symbol", required=True, help="Trading pair, e.g. BTCUSDT.")
+    predict_parser.add_argument("--interval", required=True, help="Candle interval, e.g. 1m.")
+    predict_parser.add_argument(
+        "--at",
+        default=None,
+        help="Optional reference candle open time. Defaults to latest stored candle/feature row.",
+    )
 
     return parser
 
@@ -84,7 +165,18 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    if args.command == "fetch-ohlc":
+    if args.command == "init-db":
+        repository = initialize_database(args.symbol)
+        print_json(
+            {
+                "status": "ok",
+                "database": repository._engine.url.database or "configured database",
+                "symbols": args.symbol,
+            }
+        )
+        return
+
+    if args.command == "fetch-ohlc" and not args.persist:
         candles = fetch_ohlcv(
             symbol=args.symbol,
             interval=args.interval,
@@ -93,3 +185,109 @@ def main() -> None:
             mode=args.mode,
         )
         print(json.dumps(candles, indent=2))
+        return
+
+    if args.command == "fetch-ohlc" and args.persist:
+        repository = initialize_database([args.symbol])
+        adapter = BinanceSpotMarketDataAdapter(settings=BinanceSettings.from_env(mode=args.mode))
+        try:
+            service = HistoricalMarketDataIngestionService(
+                market_data_port=adapter,
+                repository_port=repository,
+                persist_batch_candle_count=args.batch_size,
+            )
+            result = service.ingest_ohlcv(
+                HistoricalOHLCRequest(
+                    symbol=args.symbol,
+                    interval=args.interval,
+                    start_at=parse_datetime(args.start),
+                    end_at=parse_datetime(args.end),
+                )
+            )
+            print_json(
+                {
+                    "status": "ok",
+                    "source": "rest",
+                    "fetched_count": result.fetched_count,
+                    "stored_count": result.stored_count,
+                    "latest": repository.get_latest_candle_time(args.symbol, args.interval),
+                }
+            )
+        finally:
+            adapter.close()
+        return
+
+    if args.command == "ingest-ohlcv":
+        request = HistoricalOHLCRequest(
+            symbol=args.symbol,
+            interval=args.interval,
+            start_at=parse_datetime(args.start),
+            end_at=parse_datetime(args.end),
+        )
+        repository = initialize_database([request.symbol])
+
+        if args.source == "rest":
+            adapter = BinanceSpotMarketDataAdapter(settings=BinanceSettings.from_env(mode=args.mode))
+            try:
+                service = HistoricalMarketDataIngestionService(
+                    market_data_port=adapter,
+                    repository_port=repository,
+                    persist_batch_candle_count=args.batch_size,
+                )
+                result = service.ingest_ohlcv(request)
+                print_json(
+                    {
+                        "status": "ok",
+                        "source": "rest",
+                        "stored_count": result.stored_count,
+                        "fetched_count": result.fetched_count,
+                        "latest": repository.get_latest_candle_time(request.symbol, request.interval),
+                    }
+                )
+            finally:
+                adapter.close()
+            return
+
+        rest_adapter = None
+        if args.source == "dump-with-rest-tail":
+            rest_adapter = BinanceSpotMarketDataAdapter(settings=BinanceSettings.from_env(mode=args.mode))
+        service = BinancePublicDumpIngestionService(
+            repository_port=repository,
+            rest_adapter=rest_adapter,
+            persist_batch_candle_count=args.batch_size,
+        )
+        try:
+            result = service.ingest_ohlcv(
+                request,
+                include_rest_tail=args.source == "dump-with-rest-tail",
+            )
+            print_json(
+                {
+                    "status": "ok",
+                    "source": args.source,
+                    "downloaded_files": result.downloaded_files,
+                    "skipped_files": result.skipped_files,
+                    "coverage_skipped_files": result.coverage_skipped_files,
+                    "dump_rows": result.dump_rows,
+                    "rest_rows": result.rest_rows,
+                    "stored_rows": result.stored_rows,
+                    "elapsed_seconds": result.elapsed_seconds,
+                    "latest": repository.get_latest_candle_time(request.symbol, request.interval),
+                }
+            )
+        finally:
+            service.close()
+            if rest_adapter is not None:
+                rest_adapter.close()
+        return
+
+    if args.command == "predict":
+        runtime = PredictionRuntimeService(build_repository())
+        prediction = runtime.predict(
+            artifact_path=args.model_artifact,
+            symbol=args.symbol,
+            interval=args.interval,
+            reference_time=parse_datetime(args.at) if args.at else None,
+        )
+        print_json({"status": "ok", "prediction": prediction.to_dict()})
+        return

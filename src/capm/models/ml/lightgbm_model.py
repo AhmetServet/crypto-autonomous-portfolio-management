@@ -10,6 +10,11 @@ try:
 except ImportError:  # pragma: no cover - optional dependency.
     LGBMRegressor = None
 
+try:
+    import pandas as pd
+except ImportError:  # pragma: no cover - optional dependency.
+    pd = None
+
 from capm.domains.prediction import (
     DatasetAdaptationError,
     MissingOptionalDependencyError,
@@ -62,7 +67,14 @@ class LightGBMForecastingModel:
         if not isinstance(prediction_input, TabularPredictionInput):
             raise DatasetAdaptationError("LightGBM expects a tabular prediction input.")
 
-        predicted_value = float(self._model.predict([list(prediction_input.feature_vector)])[0])
+        if pd is not None:
+            prediction_frame = pd.DataFrame(
+                [list(prediction_input.feature_vector)],
+                columns=list(prediction_input.feature_names),
+            )
+            predicted_value = float(self._model.predict(prediction_frame)[0])
+        else:
+            predicted_value = float(self._model.predict([list(prediction_input.feature_vector)])[0])
         return predicted_value, {
             "prediction_time": prediction_input.prediction_time.isoformat(),
             "feature_names": list(prediction_input.feature_names),

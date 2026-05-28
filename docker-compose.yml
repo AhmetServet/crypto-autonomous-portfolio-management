@@ -1,0 +1,25 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: capm-timescaledb
+    restart: unless-stopped
+    ports:
+      - "${CAPM_POSTGRES_PORT:-6543}:5432"
+    environment:
+      POSTGRES_USER: ${CAPM_POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${CAPM_POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${CAPM_POSTGRES_DB:-postgres}
+    volumes:
+      - capm_timescaledb_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  capm_timescaledb_data:

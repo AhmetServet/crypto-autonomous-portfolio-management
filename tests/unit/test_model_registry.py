@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from capm.domains.prediction import StatisticalTrainingInput
 
 from capm.models import create_model
+from capm.models.statistical.prophet_model import pd, _to_prophet_timestamp
 
 
 class ModelRegistryTests(unittest.TestCase):
@@ -39,6 +40,13 @@ class ModelRegistryTests(unittest.TestCase):
         series = arima._build_training_series(training_input)
 
         self.assertIsNotNone(series.index.freq)
+
+    @unittest.skipIf(pd is None, "pandas is not installed")
+    def test_prophet_timestamp_adapter_strips_utc_timezone(self) -> None:
+        timestamp = _to_prophet_timestamp(datetime(2024, 1, 1, 0, 0, tzinfo=UTC))
+
+        self.assertIsNone(timestamp.tzinfo)
+        self.assertEqual(str(timestamp), "2024-01-01 00:00:00")
 
 
 if __name__ == "__main__":

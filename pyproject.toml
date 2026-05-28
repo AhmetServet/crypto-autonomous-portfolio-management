@@ -35,8 +35,8 @@ backtest = [
 
 [project.scripts]
 capm = "capm:main"
-capm-init-db = "capm.init_db:main"
 capm-experiment-walkforward = "capm.experiments.walk_forward:main"
+capm-train-production = "capm.experiments.train_production:main"
 
 [build-system]
 requires = ["uv_build>=0.9.18,<0.10.0"]

@@ -8,6 +8,7 @@ from .features import (
     IndicatorPipelineService,
 )
 from .ingestion import HistoricalMarketDataIngestionService
+from .prediction_runtime import PredictionRuntimeService, RuntimePrediction
 from .training import (
     LocalArtifactStore,
     PredictionDatasetLoader,
@@ -27,6 +28,8 @@ __all__ = [
     "LocalArtifactStore",
     "PredictionSignalStrategy",
     "PredictionDatasetLoader",
+    "PredictionRuntimeService",
+    "RuntimePrediction",
     "StatisticalDatasetAdapter",
     "TabularDatasetAdapter",
     "WalkForwardExperimentRunner",

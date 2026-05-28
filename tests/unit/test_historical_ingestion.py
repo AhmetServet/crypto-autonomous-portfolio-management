@@ -351,6 +351,41 @@ class HistoricalMarketDataIngestionServiceTests(unittest.TestCase):
 
         self.assertEqual(progress_calls, 1)
 
+    def test_ingest_ohlcv_persists_missing_rows_without_returning_candles(self) -> None:
+        repository = FakeMarketDataRepository(
+            fetch_plan=OHLCVFetchPlan(
+                covered_ranges=(),
+                missing_ranges=(
+                    TimeRange(
+                        datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                        datetime(2024, 1, 1, 0, 3, 0, tzinfo=UTC),
+                    ),
+                ),
+            )
+        )
+        port = FakeHistoricalMarketDataPort(pages=[[make_candle(0), make_candle(1)], [make_candle(2)]])
+        service = HistoricalMarketDataIngestionService(
+            market_data_port=port,
+            repository_port=repository,
+            persist_batch_candle_count=2,
+        )
+
+        result = service.ingest_ohlcv(
+            HistoricalOHLCRequest(
+                symbol="BTCUSDT",
+                interval="1m",
+                start_at=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                end_at=datetime(2024, 1, 1, 0, 3, 0, tzinfo=UTC),
+            )
+        )
+
+        self.assertEqual(result.fetched_count, 3)
+        self.assertEqual(result.stored_count, 3)
+        self.assertEqual(
+            [[candle.open_time.minute for candle in batch] for batch in repository.saved_batches],
+            [[0, 1], [2]],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -97,6 +97,8 @@ class BacktraderBacktestRunner:
         forecast_result: ForecastResult,
         starting_cash: float = 10_000.0,
         signal_policy: ThresholdSignalPolicy | None = None,
+        commission_rate: float = 0.001,
+        cash_fraction: float = 0.95,
     ) -> BacktestReport:
         """Evaluate one forecast result against stored historical candles."""
         if bt is None or pd is None:
@@ -105,6 +107,10 @@ class BacktraderBacktestRunner:
             )
         if starting_cash <= 0:
             raise BacktestConfigurationError("`starting_cash` must be positive.")
+        if commission_rate < 0:
+            raise BacktestConfigurationError("`commission_rate` must not be negative.")
+        if not 0 < cash_fraction <= 1:
+            raise BacktestConfigurationError("`cash_fraction` must be in the interval (0, 1].")
 
         candles = self.market_data_repository.get_candles(symbol, interval, start_time, end_time)
         if not candles:
@@ -130,8 +136,10 @@ class BacktraderBacktestRunner:
         cerebro.addstrategy(
             PredictionSignalStrategy,
             signal_map=build_signal_map(signals),
+            cash_fraction=cash_fraction,
         )
         cerebro.broker.setcash(starting_cash)
+        cerebro.broker.setcommission(commission=commission_rate)
         results = cerebro.run()
         strategy = results[0]
 
@@ -141,8 +149,9 @@ class BacktraderBacktestRunner:
         step_returns = _period_returns(equity_curve)
 
         notes = (
-            "Fees excluded in v1.",
+            f"Commission rate: {commission_rate:.6f}.",
             "Slippage excluded in v1.",
+            f"Buy signals deploy {cash_fraction:.2%} of available cash.",
             "Sharpe and Sortino ratios are computed from step returns without annualization.",
         )
         return BacktestReport(
