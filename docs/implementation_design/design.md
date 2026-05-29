@@ -186,7 +186,7 @@ These rules protect business logic from vendor lock-in and simplify testing.
 - `ingestion`: historical REST backfill + WebSocket close-candle stream.
 - `inference`: parallel model execution with timeout budget.
 - `training`: nightly retraining and model version updates.
-- `paper_trading`: testnet-first execution and health validation.
+- `paper_trading`: Spot Demo Mode-first execution and health validation.
 
 ### 6.4 Infrastructure
 
