@@ -7,14 +7,16 @@ from typing import Any, Protocol
 from capm.domains.prediction.entities import (
     ForecastDataset,
     ForecastRequest,
+    SequencePredictionInput,
+    SequenceTrainingInput,
     StatisticalPredictionInput,
     StatisticalTrainingInput,
     TabularPredictionInput,
     TabularTrainingInput,
 )
 
-TrainingInput = StatisticalTrainingInput | TabularTrainingInput
-PredictionInput = StatisticalPredictionInput | TabularPredictionInput
+TrainingInput = StatisticalTrainingInput | TabularTrainingInput | SequenceTrainingInput
+PredictionInput = StatisticalPredictionInput | TabularPredictionInput | SequencePredictionInput
 
 
 class DatasetLoaderPort(Protocol):

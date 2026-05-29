@@ -11,7 +11,7 @@ from pathlib import Path
 
 from capm.domains.features import FeatureRow, FeatureWindow
 from capm.domains.market_data import OHLCV
-from capm.domains.prediction import StatisticalPredictionInput, TabularPredictionInput
+from capm.domains.prediction import SequencePredictionInput, StatisticalPredictionInput, TabularPredictionInput
 from capm.services.prediction_runtime import PredictionRuntimeService
 
 
@@ -51,16 +51,29 @@ class FixedPriceModel:
         return 105.0, {"forecast_horizon": prediction_input.forecast_horizon}
 
 
+class FixedSequenceReturnModel:
+    """Test double for a deep-learning sequence return model."""
+
+    name = "lstm"
+
+    def predict(self, prediction_input: SequencePredictionInput) -> tuple[float, dict[str, object]]:
+        return 0.03, {"sequence_length": len(prediction_input.sequence)}
+
+
 class RuntimeRepository:
     """Small in-memory repository double for prediction runtime tests."""
 
     def __init__(self) -> None:
         self.reference_time = datetime(2024, 1, 1, 0, 0, tzinfo=UTC)
-        self.feature_row = FeatureRow(
-            candle=_candle(self.reference_time),
-            indicator_values={"sma_20_close": Decimal("99.5")},
-            is_feature_ready=True,
+        self.feature_rows = tuple(
+            FeatureRow(
+                candle=_candle(self.reference_time + timedelta(minutes=index), close=str(100 + index)),
+                indicator_values={"sma_20_close": Decimal(str(99.5 + index))},
+                is_feature_ready=True,
+            )
+            for index in range(3)
         )
+        self.feature_row = self.feature_rows[0]
 
     def get_latest_complete_window(
         self,
@@ -72,7 +85,7 @@ class RuntimeRepository:
         return FeatureWindow(
             symbol=symbol,
             interval=interval,
-            rows=(self.feature_row,),
+            rows=self.feature_rows[-window_size:],
             requested_features=required_features,
             is_complete=True,
         )
@@ -84,7 +97,7 @@ class RuntimeRepository:
         start_time: datetime,
         end_time: datetime,
     ) -> list[FeatureRow]:
-        return [self.feature_row] if start_time == self.reference_time else []
+        return [row for row in self.feature_rows if start_time <= row.open_time < end_time]
 
     def get_latest_candle_time(self, symbol: str, interval: str) -> datetime:
         return self.reference_time
@@ -127,9 +140,10 @@ class PredictionRuntimeTests(unittest.TestCase):
 
         self.assertEqual(prediction.artifact_kind, "production_tabular")
         self.assertEqual(prediction.symbol, "BTCUSDT")
-        self.assertEqual(prediction.predicted_value, 102.0)
+        self.assertEqual(prediction.reference_time, datetime(2024, 1, 1, 0, 2, tzinfo=UTC))
+        self.assertEqual(prediction.predicted_value, 104.04)
         self.assertAlmostEqual(prediction.predicted_return, 0.02)
-        self.assertEqual(prediction.prediction_time, datetime(2024, 1, 1, 0, 15, tzinfo=UTC))
+        self.assertEqual(prediction.prediction_time, datetime(2024, 1, 1, 0, 17, tzinfo=UTC))
 
     def test_predicts_from_walk_forward_latest_model_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -162,6 +176,43 @@ class PredictionRuntimeTests(unittest.TestCase):
         self.assertEqual(prediction.forecast_horizon, 15)
         self.assertEqual(prediction.predicted_value, 105.0)
         self.assertAlmostEqual(prediction.predicted_return, 0.05)
+
+    def test_predicts_from_deep_learning_sequence_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            artifact_path = Path(temp_dir) / "model.pkl"
+            with artifact_path.open("wb") as artifact_file:
+                pickle.dump(
+                    {
+                        "artifact_kind": "deep_learning_sequence",
+                        "model": FixedSequenceReturnModel(),
+                        "model_name": "lstm",
+                        "feature_names": ("sma_20_close",),
+                        "target_field": "close",
+                        "target_mode": "return",
+                        "forecast_horizon": 15,
+                        "sequence_length": 3,
+                        "scaler": {
+                            "mode": "none",
+                            "feature_names": ["sma_20_close"],
+                            "centers": [0.0],
+                            "scales": [1.0],
+                        },
+                        "trained_through": "2024-01-01T00:02:00+00:00",
+                    },
+                    artifact_file,
+                )
+
+            prediction = PredictionRuntimeService(RuntimeRepository()).predict(
+                artifact_path=artifact_path,
+                symbol="BTCUSDT",
+                interval="1m",
+            )
+
+        self.assertEqual(prediction.artifact_kind, "deep_learning_sequence")
+        self.assertEqual(prediction.model_name, "lstm")
+        self.assertEqual(prediction.reference_time, datetime(2024, 1, 1, 0, 2, tzinfo=UTC))
+        self.assertEqual(prediction.predicted_value, 105.06)
+        self.assertAlmostEqual(prediction.predicted_return, 0.03)
 
 
 if __name__ == "__main__":
