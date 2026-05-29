@@ -205,6 +205,66 @@ class TabularPredictionInput:
 
 
 @dataclass(frozen=True, slots=True)
+class SequenceTrainingInput:
+    """Normalized sequence training slice for deep-learning models."""
+
+    timestamps: tuple[datetime, ...]
+    feature_names: tuple[str, ...]
+    sequences: tuple[tuple[tuple[float, ...], ...], ...]
+    target_values: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        if len(self.timestamps) != len(self.sequences) or len(self.timestamps) != len(self.target_values):
+            raise PredictionValidationError("Sequence inputs must align timestamps, sequences, and targets.")
+        if len(self.sequences) < 1:
+            raise PredictionValidationError("Sequence training requires at least one sample.")
+        if not self.feature_names:
+            raise PredictionValidationError("`feature_names` must not be empty.")
+        _validate_numeric_sequence(self.target_values, field_name="target_values")
+        expected_width = len(self.feature_names)
+        expected_length = len(self.sequences[0])
+        if expected_length < 1:
+            raise PredictionValidationError("Each sequence must contain at least one step.")
+        for sequence in self.sequences:
+            if len(sequence) != expected_length:
+                raise PredictionValidationError("All sequences must use the same sequence length.")
+            for step in sequence:
+                if len(step) != expected_width:
+                    raise PredictionValidationError("Each sequence step must match the declared feature names.")
+                _validate_numeric_sequence(step, field_name="sequence step")
+        object.__setattr__(self, "timestamps", tuple(ensure_utc(timestamp) for timestamp in self.timestamps))
+
+
+@dataclass(frozen=True, slots=True)
+class SequencePredictionInput:
+    """Prediction metadata and feature sequence for one deep-learning forecast."""
+
+    reference_time: datetime
+    prediction_time: datetime
+    reference_value: float
+    feature_names: tuple[str, ...]
+    sequence: tuple[tuple[float, ...], ...]
+    forecast_horizon: int
+
+    def __post_init__(self) -> None:
+        if self.forecast_horizon < 1:
+            raise PredictionValidationError("`forecast_horizon` must be positive.")
+        if self.prediction_time <= self.reference_time:
+            raise PredictionValidationError("`prediction_time` must be later than `reference_time`.")
+        if not self.feature_names:
+            raise PredictionValidationError("`feature_names` must not be empty.")
+        if not self.sequence:
+            raise PredictionValidationError("`sequence` must not be empty.")
+        expected_width = len(self.feature_names)
+        for step in self.sequence:
+            if len(step) != expected_width:
+                raise PredictionValidationError("Each sequence step must align with `feature_names`.")
+            _validate_numeric_sequence(step, field_name="sequence step")
+        object.__setattr__(self, "reference_time", ensure_utc(self.reference_time))
+        object.__setattr__(self, "prediction_time", ensure_utc(self.prediction_time))
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedPredictionStep:
     """Prepared training and prediction payloads for one walk-forward step."""
 
@@ -213,8 +273,8 @@ class PreparedPredictionStep:
     prediction_time: datetime
     reference_value: float
     actual_value: float
-    training_input: StatisticalTrainingInput | TabularTrainingInput
-    prediction_input: StatisticalPredictionInput | TabularPredictionInput
+    training_input: StatisticalTrainingInput | TabularTrainingInput | SequenceTrainingInput
+    prediction_input: StatisticalPredictionInput | TabularPredictionInput | SequencePredictionInput
 
     def __post_init__(self) -> None:
         if self.reference_index < 0:

@@ -10,6 +10,9 @@ from .features import (
 from .ingestion import HistoricalMarketDataIngestionService
 from .prediction_runtime import PredictionRuntimeService, RuntimePrediction
 from .training import (
+    DeepLearningProductionTrainer,
+    DeepLearningTrainingResult,
+    FeatureScaler,
     LocalArtifactStore,
     PredictionDatasetLoader,
     StatisticalDatasetAdapter,
@@ -25,6 +28,9 @@ __all__ = [
     "FeatureBatch",
     "HistoricalMarketDataIngestionService",
     "IndicatorPipelineService",
+    "DeepLearningProductionTrainer",
+    "DeepLearningTrainingResult",
+    "FeatureScaler",
     "LocalArtifactStore",
     "PredictionSignalStrategy",
     "PredictionDatasetLoader",

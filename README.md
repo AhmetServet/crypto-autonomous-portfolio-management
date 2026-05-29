@@ -139,3 +139,26 @@ uv run capm predict \
 ```
 
 Use `--at 2026-05-25T21:48:00Z` to predict from a specific candle open time instead of the latest stored row. Tabular production artifacts validate that the persisted feature row contains the exact feature names saved with the model.
+
+Deep-learning sequence models are optional because they require PyTorch. Install the extra before training LSTM or GRU artifacts:
+
+```bash
+uv sync --extra deep-learning
+```
+
+Train one LSTM or GRU production artifact:
+
+```bash
+uv run capm-train-deep-learning --config experiments/configs/train_lstm_production.example.json
+uv run capm-train-deep-learning --config experiments/configs/train_gru_production.example.json
+```
+
+The deep-learning CLI prints progress logs to stderr for long runs while preserving the final JSON summary on stdout. Use `--quiet` when only the JSON output is needed.
+
+Compare both recurrent models from one config:
+
+```bash
+uv run capm-train-deep-learning --config experiments/configs/compare_deep_learning.example.json
+```
+
+The deep-learning trainer reads ready feature rows from the database, builds causal sequence windows, fits the feature scaler on the train split only, writes `model.pkl` and `summary.json`, and runs the same holdout Backtrader evaluation path as production tabular models. Saved artifacts use `artifact_kind = "deep_learning_sequence"` and can be passed to `uv run capm predict` with the same command shown above.

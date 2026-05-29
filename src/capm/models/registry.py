@@ -8,6 +8,7 @@ from typing import Any
 
 from capm.core.contracts import ForecastModelPort
 
+from .deep_learning import GRUForecastingModel, LSTMForecastingModel
 from .ml import LightGBMForecastingModel, XGBoostForecastingModel
 from .statistical import ARIMAForecastingModel, ProphetForecastingModel
 
@@ -45,11 +46,21 @@ def _build_lightgbm(parameters: dict[str, Any]) -> ForecastModelPort:
     return LightGBMForecastingModel(model_kwargs=dict(parameters))
 
 
+def _build_lstm(parameters: dict[str, Any]) -> ForecastModelPort:
+    return LSTMForecastingModel(model_kwargs=dict(parameters))
+
+
+def _build_gru(parameters: dict[str, Any]) -> ForecastModelPort:
+    return GRUForecastingModel(model_kwargs=dict(parameters))
+
+
 MODEL_REGISTRY: dict[str, RegisteredModel] = {
     "arima": RegisteredModel(family="statistical", factory=_build_arima),
     "prophet": RegisteredModel(family="statistical", factory=_build_prophet),
     "xgboost": RegisteredModel(family="ml", factory=_build_xgboost),
     "lightgbm": RegisteredModel(family="ml", factory=_build_lightgbm),
+    "lstm": RegisteredModel(family="deep_learning", factory=_build_lstm),
+    "gru": RegisteredModel(family="deep_learning", factory=_build_gru),
 }
 
 

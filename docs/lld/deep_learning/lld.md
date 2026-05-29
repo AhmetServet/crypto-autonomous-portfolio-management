@@ -242,7 +242,7 @@ Common config fields:
 - `early_stopping_patience`
 - `weight_decay`
 - `seed`
-- `device`
+- `device`, where `auto` selects CUDA when available, then Apple MPS, then CPU
 
 Default starting point:
 ```json
@@ -258,7 +258,8 @@ Default starting point:
   "early_stopping_patience": 3,
   "target_mode": "return",
   "scaler": "zscore",
-  "seed": 42
+  "seed": 42,
+  "device": "auto"
 }
 ```
 
@@ -470,20 +471,25 @@ uv run python -m unittest discover -s tests -t . -v
 ```
 
 ## 17. Implementation Plan
-1. Add the `deep-learning` optional dependency group.
-2. Add `models/deep_learning` wrappers and register `lstm` and `gru`.
-3. Add `services/training/sequence_dataset.py` for sequence construction and scaling.
-4. Add deterministic tiny-fixture tests for sequence shaping and model wrappers.
-5. Add `DeepLearningProductionTrainer`.
-6. Add `capm-train-deep-learning` CLI.
-7. Add LSTM, GRU, and comparison configs.
-8. Extend `PredictionRuntimeService` for `artifact_kind = "deep_learning_sequence"`.
-9. Run ARIMA/Prophet/LSTM/GRU on the same test window and report timeline acceptance status.
-10. Update README and prediction docs with the final command set and results.
+Current implementation status:
+- Done: add the `deep-learning` optional dependency group.
+- Done: add `models/deep_learning` wrappers and register `lstm` and `gru`.
+- Done: add `services/training/sequence_dataset.py` for sequence construction and scaling.
+- Done: add focused tests for sequence shaping, scaler behavior, registry wiring, and runtime deep-learning prediction.
+- Done: add `DeepLearningProductionTrainer`.
+- Done: add `capm-train-deep-learning` CLI.
+- Done: add LSTM, GRU, and comparison configs.
+- Done: extend `PredictionRuntimeService` for `artifact_kind = "deep_learning_sequence"`.
+- Done: add automatic device selection for CUDA, Apple MPS, or CPU fallback.
+- Done: update README with the command set.
+- Pending benchmark: run ARIMA/Prophet/LSTM/GRU on the same test window and report timeline acceptance status.
+
+The current trainer is a production-usable artifact path, not yet a model-quality claim. It saves a deployable artifact that can predict on demand through `capm predict`, converts return targets back into prices for metrics and Backtrader, and preserves feature/scaler metadata required for runtime inference.
 
 ## 18. Known Limitations
 - Initial LSTM/GRU models are single-symbol and single-interval.
 - First implementation is sequence-to-one only.
+- Validation split and early stopping are not implemented yet; `max_epochs` controls training length.
 - No attention mechanism or transformer baseline is included.
 - No true classification target is included unless the broader prediction stack adds it first.
 - No model-version registry table exists yet; artifacts remain filesystem-based.

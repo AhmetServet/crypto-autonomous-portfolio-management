@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from capm.domains.prediction import StatisticalTrainingInput
 
 from capm.models import create_model
+from capm.models.deep_learning import resolve_torch_device
+from capm.models.deep_learning.base import torch
 from capm.models.statistical.prophet_model import pd, _to_prophet_timestamp
 
 
@@ -19,11 +21,21 @@ class ModelRegistryTests(unittest.TestCase):
         prophet = create_model("prophet")
         xgboost = create_model("xgboost")
         lightgbm = create_model("lightgbm")
+        lstm = create_model("lstm")
+        gru = create_model("gru")
 
         self.assertEqual(arima.name, "arima")
         self.assertEqual(prophet.name, "prophet")
         self.assertEqual(xgboost.name, "xgboost")
         self.assertEqual(lightgbm.name, "lightgbm")
+        self.assertEqual(lstm.name, "lstm")
+        self.assertEqual(gru.name, "gru")
+
+    @unittest.skipIf(torch is None, "torch is not installed")
+    def test_deep_learning_auto_device_prefers_available_accelerator_or_cpu(self) -> None:
+        device = resolve_torch_device("auto")
+
+        self.assertIn(device.type, {"cuda", "mps", "cpu"})
 
     def test_arima_builds_frequency_aware_training_series(self) -> None:
         arima = create_model("arima")

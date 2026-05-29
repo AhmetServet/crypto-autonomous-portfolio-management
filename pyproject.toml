@@ -32,11 +32,17 @@ backtest = [
     "backtrader",
     "pandas",
 ]
+deep-learning = [
+    "numpy",
+    "pandas",
+    "torch",
+]
 
 [project.scripts]
 capm = "capm:main"
 capm-experiment-walkforward = "capm.experiments.walk_forward:main"
 capm-train-production = "capm.experiments.train_production:main"
+capm-train-deep-learning = "capm.experiments.train_deep_learning:main"
 
 [build-system]
 requires = ["uv_build>=0.9.18,<0.10.0"]
