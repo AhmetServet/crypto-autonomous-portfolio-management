@@ -7,6 +7,7 @@ from .market_data import MarketDataRepositoryPort
 from .prediction import ArtifactStorePort
 from .prediction import DatasetLoaderPort
 from .prediction import ForecastModelPort
+from .prediction import PredictionJournalRepositoryPort
 
 __all__ = [
     "ArtifactStorePort",
@@ -16,4 +17,5 @@ __all__ = [
     "ForecastModelPort",
     "HistoricalMarketDataPort",
     "MarketDataRepositoryPort",
+    "PredictionJournalRepositoryPort",
 ]

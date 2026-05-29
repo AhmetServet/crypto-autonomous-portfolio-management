@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from itertools import islice
 from typing import Any
 
@@ -23,6 +23,15 @@ from capm.domains.features import (
 )
 from capm.domains.market_data import CoverageRange, OHLCVFetchPlan, TimeRange, interval_to_timedelta, normalize_symbol
 from capm.domains.market_data.entities import OHLCV, ensure_utc
+from capm.domains.prediction import (
+    PredictionJournalEntry,
+    PredictionJournalSettlement,
+    PredictionJournalSummary,
+    direction_accuracy,
+    mape,
+    prediction_direction,
+    rmse,
+)
 from capm.infra.database.models import (
     build_feature_table_name,
     build_ohlcv_table_name,
@@ -31,7 +40,9 @@ from capm.infra.database.models import (
     get_coverage_model,
     get_feature_model,
     get_ohlcv_model,
+    get_prediction_journal_model,
     indicator_to_record,
+    prediction_journal_to_record,
 )
 
 
@@ -77,6 +88,7 @@ class TimescaleMarketDataRepository:
         self._ohlcv_coverage_model = get_coverage_model("ohlcv_coverage", self._schema_name)
         self._feature_coverage_model = get_coverage_model("feature_coverage", self._schema_name)
         self._indicator_coverage_model = get_coverage_model("indicator_coverage", self._schema_name)
+        self._prediction_journal_model = get_prediction_journal_model(self._schema_name)
 
     def initialize_schema(self, symbols: Iterable[str] | None = None) -> None:
         """Create metadata plus optional coinpair-scoped market and feature tables."""
@@ -108,6 +120,7 @@ class TimescaleMarketDataRepository:
             self._ohlcv_coverage_model,
             self._feature_coverage_model,
             self._indicator_coverage_model,
+            self._prediction_journal_model,
         ):
             self._ensure_static_table(model)
 
@@ -792,3 +805,143 @@ class TimescaleMarketDataRepository:
             window_size=window_size,
             required_features=required_features,
         )
+
+    def save_prediction_journal_entry(self, entry: PredictionJournalEntry) -> PredictionJournalEntry:
+        """Insert or return one idempotent prediction journal row."""
+        self._ensure_static_table(self._prediction_journal_model)
+        now = datetime.now(UTC)
+        payload = prediction_journal_to_record(entry)
+        payload["created_at"] = entry.created_at or now
+        payload["updated_at"] = now
+        with self._session_factory() as session:
+            existing_stmt = select(self._prediction_journal_model).where(
+                self._prediction_journal_model.symbol == entry.symbol,
+                self._prediction_journal_model.interval == entry.interval,
+                self._prediction_journal_model.model_name == entry.model_name,
+                self._prediction_journal_model.artifact_sha256 == entry.artifact_sha256,
+                self._prediction_journal_model.reference_time == entry.reference_time,
+                self._prediction_journal_model.prediction_time == entry.prediction_time,
+            )
+            existing = session.scalars(existing_stmt).first()
+            if existing is not None:
+                return existing.to_domain()
+            row = self._prediction_journal_model(**payload)
+            session.add(row)
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                existing = session.scalars(existing_stmt).first()
+                if existing is None:
+                    raise
+                return existing.to_domain()
+            session.refresh(row)
+            return row.to_domain()
+
+    def get_unsettled_prediction_journal_entries(
+        self,
+        symbol: str,
+        interval: str,
+        until: datetime,
+        limit: int = 1000,
+    ) -> tuple[PredictionJournalEntry, ...]:
+        """Return unsettled prediction rows ready for settlement."""
+        self._ensure_static_table(self._prediction_journal_model)
+        normalized_symbol = normalize_symbol(symbol)
+        normalized_until = ensure_utc(until)
+        with self._session_factory() as session:
+            stmt = (
+                select(self._prediction_journal_model)
+                .where(
+                    self._prediction_journal_model.symbol == normalized_symbol,
+                    self._prediction_journal_model.interval == interval,
+                    self._prediction_journal_model.prediction_time <= normalized_until,
+                    self._prediction_journal_model.settled_at.is_(None),
+                )
+                .order_by(self._prediction_journal_model.prediction_time.asc())
+                .limit(limit)
+            )
+            return tuple(row.to_domain() for row in session.scalars(stmt).all())
+
+    def settle_prediction_journal_entry(self, settlement: PredictionJournalSettlement) -> PredictionJournalEntry:
+        """Persist actual outcome fields for one journal entry."""
+        self._ensure_static_table(self._prediction_journal_model)
+        with self._session_factory() as session:
+            row = session.get(self._prediction_journal_model, settlement.journal_id)
+            if row is None:
+                raise ValueError(f"Prediction journal entry {settlement.journal_id} was not found.")
+            row.actual_value = settlement.actual_value
+            row.actual_return = settlement.actual_return
+            row.actual_direction = settlement.actual_direction
+            row.absolute_error = settlement.absolute_error
+            row.absolute_percentage_error = settlement.absolute_percentage_error
+            row.direction_correct = settlement.direction_correct
+            row.settled_at = settlement.settled_at
+            row.updated_at = datetime.now(UTC)
+            session.commit()
+            session.refresh(row)
+            return row.to_domain()
+
+    def summarize_prediction_journal(
+        self,
+        symbol: str,
+        interval: str,
+        start_time: datetime,
+        end_time: datetime,
+        model_name: str | None = None,
+    ) -> PredictionJournalSummary:
+        """Return aggregate journal metrics for one time range."""
+        self._ensure_static_table(self._prediction_journal_model)
+        normalized_symbol = normalize_symbol(symbol)
+        normalized_start = ensure_utc(start_time)
+        normalized_end = ensure_utc(end_time)
+        with self._session_factory() as session:
+            conditions = [
+                self._prediction_journal_model.symbol == normalized_symbol,
+                self._prediction_journal_model.interval == interval,
+                self._prediction_journal_model.reference_time >= normalized_start,
+                self._prediction_journal_model.reference_time < normalized_end,
+            ]
+            if model_name:
+                conditions.append(self._prediction_journal_model.model_name == model_name.strip().lower())
+            stmt = select(self._prediction_journal_model).where(*conditions)
+            rows = [row.to_domain() for row in session.scalars(stmt).all()]
+
+        settled = tuple(row for row in rows if row.settled_at is not None and row.actual_value is not None)
+        predicted_values = tuple(row.predicted_value for row in settled)
+        actual_values = tuple(float(row.actual_value) for row in settled)
+        reference_values = tuple(row.reference_value for row in settled)
+        predicted_returns = tuple(row.predicted_return for row in rows)
+        actual_returns = tuple(float(row.actual_return) for row in settled if row.actual_return is not None)
+        predicted_counts = self._direction_counts(row.predicted_direction for row in rows)
+        actual_counts = self._direction_counts(row.actual_direction for row in settled if row.actual_direction)
+        return PredictionJournalSummary(
+            symbol=normalized_symbol,
+            interval=interval,
+            model_name=model_name.strip().lower() if model_name else None,
+            start_time=normalized_start,
+            end_time=normalized_end,
+            prediction_count=len(rows),
+            settled_count=len(settled),
+            mape=mape(predicted_values, actual_values) if settled else None,
+            rmse=rmse(predicted_values, actual_values) if settled else None,
+            direction_accuracy=direction_accuracy(
+                predicted_values=predicted_values,
+                actual_values=actual_values,
+                reference_values=reference_values,
+            )
+            if settled
+            else None,
+            mean_predicted_return=(sum(predicted_returns) / len(predicted_returns)) if predicted_returns else None,
+            mean_actual_return=(sum(actual_returns) / len(actual_returns)) if actual_returns else None,
+            predicted_direction_counts=predicted_counts,
+            actual_direction_counts=actual_counts,
+        )
+
+    @staticmethod
+    def _direction_counts(values: Iterable[str | None]) -> dict[str, int]:
+        counts = {"up": 0, "down": 0, "flat": 0}
+        for value in values:
+            if value in counts:
+                counts[value] += 1
+        return counts

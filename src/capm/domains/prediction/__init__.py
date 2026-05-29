@@ -23,6 +23,12 @@ from .errors import (
     PredictionValidationError,
     SplitValidationError,
 )
+from .journal import (
+    PredictionJournalEntry,
+    PredictionJournalSettlement,
+    PredictionJournalSummary,
+    prediction_direction,
+)
 from .metrics import aggregate_reports, direction_accuracy, mape, rmse
 from .signals import SignalAction, SignalDecision, ThresholdSignalPolicy, generate_threshold_signals
 from .splits import WalkForwardSplit, build_walk_forward_splits
@@ -39,6 +45,9 @@ __all__ = [
     "ForecastResult",
     "MissingOptionalDependencyError",
     "PredictionValidationError",
+    "PredictionJournalEntry",
+    "PredictionJournalSettlement",
+    "PredictionJournalSummary",
     "PreparedPredictionStep",
     "SequencePredictionInput",
     "SequenceTrainingInput",
@@ -56,5 +65,6 @@ __all__ = [
     "direction_accuracy",
     "generate_threshold_signals",
     "mape",
+    "prediction_direction",
     "rmse",
 ]

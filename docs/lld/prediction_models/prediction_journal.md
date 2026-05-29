@@ -429,16 +429,17 @@ uv run python -m unittest discover -s tests -t . -v
 ```
 
 ## 17. Implementation Plan
-1. Add prediction journal domain entities and validation helpers.
-2. Add repository protocol methods for save, read unsettled, settle, and summarize.
-3. Add TimescaleDB table creation for `prediction_journal`.
-4. Implement TimescaleDB persistence and idempotent upsert.
-5. Add `PredictionJournalService`.
-6. Extend `capm predict` with `--journal`.
-7. Add `capm settle-predictions`.
-8. Add `capm prediction-journal summary`.
-9. Add unit and repository tests.
-10. Update README with the command set.
+Current implementation status:
+- Done: add prediction journal domain entities and validation helpers.
+- Done: add repository protocol methods for save, read unsettled, settle, and summarize.
+- Done: add TimescaleDB/SQLite-compatible table creation for `prediction_journal`.
+- Done: implement repository persistence and idempotent duplicate handling.
+- Done: add `PredictionJournalService`.
+- Done: extend `capm predict` with `--journal`.
+- Done: add `capm settle-predictions`.
+- Done: add `capm prediction-journal summary`.
+- Done: add unit and repository tests.
+- Done: update README with the command set.
 
 ## 18. Open Decisions
 - Should `capm predict` journal by default once the testnet scheduler exists?

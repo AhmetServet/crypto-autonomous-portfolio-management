@@ -162,3 +162,32 @@ uv run capm-train-deep-learning --config experiments/configs/compare_deep_learni
 ```
 
 The deep-learning trainer reads ready feature rows from the database, builds causal sequence windows, fits the feature scaler on the train split only, writes `model.pkl` and `summary.json`, and runs the same holdout Backtrader evaluation path as production tabular models. Saved artifacts use `artifact_kind = "deep_learning_sequence"` and can be passed to `uv run capm predict` with the same command shown above.
+
+### Prediction journal
+Persist runtime predictions when you want to evaluate live or daytime model behavior after the forecast horizon passes:
+
+```bash
+uv run capm predict \
+  --model-artifact experiments/results/<run_id>/model.pkl \
+  --symbol BTCUSDT \
+  --interval 1m \
+  --journal
+```
+
+Settle journal rows once the target candles exist:
+
+```bash
+uv run capm settle-predictions \
+  --symbol BTCUSDT \
+  --interval 1m
+```
+
+Summarize settled journal quality:
+
+```bash
+uv run capm prediction-journal summary \
+  --symbol BTCUSDT \
+  --interval 1m \
+  --start 2026-05-01T00:00:00Z \
+  --end 2026-05-30T00:00:00Z
+```
