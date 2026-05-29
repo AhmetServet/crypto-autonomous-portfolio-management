@@ -7,12 +7,13 @@ from decimal import Decimal
 import json
 from typing import Any, cast
 
-from sqlalchemy import Boolean, DateTime, Integer, JSON, Numeric, String
+from sqlalchemy import Boolean, DateTime, Float, Integer, JSON, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from capm.domains.features import ComputedIndicatorSet
 from capm.domains.market_data import CoverageRange
 from capm.domains.market_data.entities import OHLCV, ensure_utc, normalize_symbol
+from capm.domains.prediction import PredictionJournalEntry, prediction_direction
 
 
 class Base(DeclarativeBase):
@@ -74,6 +75,7 @@ _OHLCV_MODEL_CACHE: dict[tuple[str | None, str], type[Base]] = {}
 _FEATURE_MODEL_CACHE: dict[tuple[str | None, str], type[Base]] = {}
 _COINPAIR_MODEL_CACHE: dict[str | None, type[Base]] = {}
 _COVERAGE_MODEL_CACHE: dict[tuple[str | None, str], type[Base]] = {}
+_PREDICTION_JOURNAL_MODEL_CACHE: dict[str | None, type[Base]] = {}
 
 
 def build_ohlcv_table_name(coinpair_id: int) -> str:
@@ -165,6 +167,47 @@ class FeatureModelMixin:
         )
 
 
+class PredictionJournalModelMixin:
+    """Shared behavior for the prediction journal table."""
+
+    def to_domain(self) -> PredictionJournalEntry:
+        """Convert a journal row into a domain entity."""
+        return PredictionJournalEntry(
+            id=self.id,
+            created_at=ensure_utc(self.created_at),
+            updated_at=ensure_utc(self.updated_at),
+            symbol=self.symbol,
+            interval=self.interval,
+            model_name=self.model_name,
+            artifact_kind=self.artifact_kind,
+            artifact_path=self.artifact_path,
+            artifact_sha256=self.artifact_sha256,
+            reference_time=ensure_utc(self.reference_time),
+            prediction_time=ensure_utc(self.prediction_time),
+            forecast_horizon=self.forecast_horizon,
+            target_field=self.target_field,
+            target_mode=self.target_mode,
+            reference_value=self.reference_value,
+            predicted_value=self.predicted_value,
+            predicted_return=self.predicted_return,
+            predicted_direction=self.predicted_direction,
+            feature_names=tuple(self.feature_names or []),
+            metadata=dict(self.extra_metadata or {}),
+            actual_value=self.actual_value,
+            actual_return=self.actual_return,
+            actual_direction=self.actual_direction,
+            absolute_error=self.absolute_error,
+            absolute_percentage_error=self.absolute_percentage_error,
+            direction_correct=self.direction_correct,
+            settled_at=ensure_utc(self.settled_at) if self.settled_at else None,
+        )
+
+    @classmethod
+    def from_domain(cls, entity: PredictionJournalEntry) -> Any:
+        """Convert a journal domain entity into a SQLAlchemy model."""
+        return cls(**prediction_journal_to_record(entity))
+
+
 class CoverageModelMixin:
     """Shared behavior for coverage metadata models."""
 
@@ -242,6 +285,126 @@ def get_coverage_model(table_name: str, schema_name: str | None = None) -> type[
         type(f"{table_name.title().replace('_', '')}Model", (CoverageModelMixin, Base), attributes),
     )
     _COVERAGE_MODEL_CACHE[cache_key] = model
+    return model
+
+
+def prediction_journal_to_record(entity: PredictionJournalEntry) -> dict[str, object]:
+    """Convert a prediction journal entry into a database record payload."""
+    return {
+        "symbol": entity.symbol,
+        "interval": entity.interval,
+        "model_name": entity.model_name,
+        "artifact_kind": entity.artifact_kind,
+        "artifact_path": entity.artifact_path,
+        "artifact_sha256": entity.artifact_sha256,
+        "reference_time": entity.reference_time,
+        "prediction_time": entity.prediction_time,
+        "forecast_horizon": entity.forecast_horizon,
+        "target_field": entity.target_field,
+        "target_mode": entity.target_mode,
+        "reference_value": entity.reference_value,
+        "predicted_value": entity.predicted_value,
+        "predicted_return": entity.predicted_return,
+        "predicted_direction": prediction_direction(entity.predicted_return),
+        "feature_names": list(entity.feature_names),
+        "extra_metadata": entity.metadata,
+        "actual_value": entity.actual_value,
+        "actual_return": entity.actual_return,
+        "actual_direction": entity.actual_direction,
+        "absolute_error": entity.absolute_error,
+        "absolute_percentage_error": entity.absolute_percentage_error,
+        "direction_correct": entity.direction_correct,
+        "settled_at": entity.settled_at,
+    }
+
+
+def get_prediction_journal_model(schema_name: str | None = None) -> type[Base]:
+    """Return the static ORM model for prediction journal rows."""
+    cached_model = _PREDICTION_JOURNAL_MODEL_CACHE.get(schema_name)
+    if cached_model is not None:
+        return cached_model
+
+    table_args: tuple[Any, ...] = (
+        UniqueConstraint(
+            "symbol",
+            "interval",
+            "model_name",
+            "artifact_sha256",
+            "reference_time",
+            "prediction_time",
+            name="uq_prediction_journal_prediction",
+        ),
+    )
+    if schema_name:
+        table_args = (*table_args, {"schema": schema_name})
+
+    annotations = {
+        "id": Mapped[int],
+        "created_at": Mapped[datetime],
+        "updated_at": Mapped[datetime],
+        "symbol": Mapped[str],
+        "interval": Mapped[str],
+        "model_name": Mapped[str],
+        "artifact_kind": Mapped[str],
+        "artifact_path": Mapped[str],
+        "artifact_sha256": Mapped[str],
+        "reference_time": Mapped[datetime],
+        "prediction_time": Mapped[datetime],
+        "forecast_horizon": Mapped[int],
+        "target_field": Mapped[str],
+        "target_mode": Mapped[str],
+        "reference_value": Mapped[float],
+        "predicted_value": Mapped[float],
+        "predicted_return": Mapped[float],
+        "predicted_direction": Mapped[str],
+        "feature_names": Mapped[list[str]],
+        "extra_metadata": Mapped[dict[str, object]],
+        "actual_value": Mapped[float | None],
+        "actual_return": Mapped[float | None],
+        "actual_direction": Mapped[str | None],
+        "absolute_error": Mapped[float | None],
+        "absolute_percentage_error": Mapped[float | None],
+        "direction_correct": Mapped[bool | None],
+        "settled_at": Mapped[datetime | None],
+    }
+    attributes: dict[str, Any] = {
+        "__tablename__": "prediction_journal",
+        "__module__": __name__,
+        "__table_args__": table_args,
+        "__annotations__": annotations,
+        "id": mapped_column(Integer, primary_key=True, autoincrement=True),
+        "created_at": mapped_column(DateTime(timezone=True), nullable=False),
+        "updated_at": mapped_column(DateTime(timezone=True), nullable=False),
+        "symbol": mapped_column(String(64), nullable=False, index=True),
+        "interval": mapped_column(String(5), nullable=False, index=True),
+        "model_name": mapped_column(String(64), nullable=False, index=True),
+        "artifact_kind": mapped_column(String(64), nullable=False),
+        "artifact_path": mapped_column(String(1024), nullable=False),
+        "artifact_sha256": mapped_column(String(64), nullable=False),
+        "reference_time": mapped_column(DateTime(timezone=True), nullable=False, index=True),
+        "prediction_time": mapped_column(DateTime(timezone=True), nullable=False, index=True),
+        "forecast_horizon": mapped_column(Integer, nullable=False),
+        "target_field": mapped_column(String(32), nullable=False),
+        "target_mode": mapped_column(String(32), nullable=False),
+        "reference_value": mapped_column(Float, nullable=False),
+        "predicted_value": mapped_column(Float, nullable=False),
+        "predicted_return": mapped_column(Float, nullable=False),
+        "predicted_direction": mapped_column(String(8), nullable=False),
+        "feature_names": mapped_column(JSON, nullable=False, default=list),
+        "extra_metadata": mapped_column(JSON, nullable=False, default=dict),
+        "actual_value": mapped_column(Float, nullable=True),
+        "actual_return": mapped_column(Float, nullable=True),
+        "actual_direction": mapped_column(String(8), nullable=True),
+        "absolute_error": mapped_column(Float, nullable=True),
+        "absolute_percentage_error": mapped_column(Float, nullable=True),
+        "direction_correct": mapped_column(Boolean, nullable=True),
+        "settled_at": mapped_column(DateTime(timezone=True), nullable=True, index=True),
+    }
+    model = cast(
+        type[Base],
+        type("PredictionJournalModel", (PredictionJournalModelMixin, Base), attributes),
+    )
+    _PREDICTION_JOURNAL_MODEL_CACHE[schema_name] = model
     return model
 
 

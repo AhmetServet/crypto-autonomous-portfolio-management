@@ -7,11 +7,12 @@ import json
 from datetime import UTC, datetime
 
 from capm.core.config import BinanceSettings, DatabaseSettings
-from capm.domains.market_data import HistoricalOHLCRequest
+from capm.domains.market_data import HistoricalOHLCRequest, interval_to_timedelta
 from capm.init_db import initialize_database
 from capm.infra.database.timescale import TimescaleMarketDataRepository
 from capm.infra.exchange import BinanceSpotMarketDataAdapter
 from capm.services.ingestion import BinancePublicDumpIngestionService, HistoricalMarketDataIngestionService
+from capm.services.prediction_journal import PredictionJournalService
 from capm.services.prediction_runtime import PredictionRuntimeService
 
 
@@ -156,6 +157,35 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional reference candle open time. Defaults to latest stored candle/feature row.",
     )
+    predict_parser.add_argument(
+        "--journal",
+        action="store_true",
+        help="Persist the prediction into prediction_journal and include journal_id in the output.",
+    )
+
+    settle_parser = subparsers.add_parser(
+        "settle-predictions",
+        help="Settle prediction journal rows whose target candles are available.",
+    )
+    settle_parser.add_argument("--symbol", required=True, help="Trading pair, e.g. BTCUSDT.")
+    settle_parser.add_argument("--interval", required=True, help="Candle interval, e.g. 1m.")
+    settle_parser.add_argument("--until", default=None, help="Settle predictions up to this ISO-8601 timestamp.")
+    settle_parser.add_argument("--limit", type=int, default=1000, help="Maximum unsettled rows to process.")
+
+    journal_parser = subparsers.add_parser(
+        "prediction-journal",
+        help="Inspect prediction journal rows.",
+    )
+    journal_subparsers = journal_parser.add_subparsers(dest="journal_command", required=True)
+    summary_parser = journal_subparsers.add_parser(
+        "summary",
+        help="Summarize prediction journal quality metrics.",
+    )
+    summary_parser.add_argument("--symbol", required=True, help="Trading pair, e.g. BTCUSDT.")
+    summary_parser.add_argument("--interval", required=True, help="Candle interval, e.g. 1m.")
+    summary_parser.add_argument("--start", required=True, help="Inclusive start datetime in ISO-8601 format.")
+    summary_parser.add_argument("--end", required=True, help="Exclusive end datetime in ISO-8601 format.")
+    summary_parser.add_argument("--model-name", default=None, help="Optional model name filter.")
 
     return parser
 
@@ -282,12 +312,50 @@ def main() -> None:
         return
 
     if args.command == "predict":
-        runtime = PredictionRuntimeService(build_repository())
+        repository = build_repository()
+        runtime = PredictionRuntimeService(repository)
         prediction = runtime.predict(
             artifact_path=args.model_artifact,
             symbol=args.symbol,
             interval=args.interval,
             reference_time=parse_datetime(args.at) if args.at else None,
         )
-        print_json({"status": "ok", "prediction": prediction.to_dict()})
+        payload = prediction.to_dict()
+        if args.journal:
+            journal_entry = PredictionJournalService(
+                journal_repository=repository,
+                market_data_repository=repository,
+            ).journal_prediction(prediction)
+            payload["journal_id"] = journal_entry.id
+        print_json({"status": "ok", "prediction": payload})
+        return
+
+    if args.command == "settle-predictions":
+        repository = build_repository()
+        until = parse_datetime(args.until) if args.until else datetime.now(UTC) - interval_to_timedelta(args.interval)
+        result = PredictionJournalService(
+            journal_repository=repository,
+            market_data_repository=repository,
+        ).settle_predictions(
+            symbol=args.symbol,
+            interval=args.interval,
+            until=until,
+            limit=args.limit,
+        )
+        print_json({"status": "ok", **result})
+        return
+
+    if args.command == "prediction-journal" and args.journal_command == "summary":
+        repository = build_repository()
+        summary = PredictionJournalService(
+            journal_repository=repository,
+            market_data_repository=repository,
+        ).summarize(
+            symbol=args.symbol,
+            interval=args.interval,
+            start_time=parse_datetime(args.start),
+            end_time=parse_datetime(args.end),
+            model_name=args.model_name,
+        )
+        print_json({"status": "ok", "summary": summary.to_dict()})
         return

@@ -8,6 +8,7 @@ from .features import (
     IndicatorPipelineService,
 )
 from .ingestion import HistoricalMarketDataIngestionService
+from .prediction_journal import PredictionJournalService, artifact_sha256
 from .prediction_runtime import PredictionRuntimeService, RuntimePrediction
 from .training import (
     DeepLearningProductionTrainer,
@@ -34,11 +35,13 @@ __all__ = [
     "LocalArtifactStore",
     "PredictionSignalStrategy",
     "PredictionDatasetLoader",
+    "PredictionJournalService",
     "PredictionRuntimeService",
     "RuntimePrediction",
     "StatisticalDatasetAdapter",
     "TabularDatasetAdapter",
     "WalkForwardExperimentRunner",
     "build_signal_map",
+    "artifact_sha256",
     "infer_feature_names",
 ]

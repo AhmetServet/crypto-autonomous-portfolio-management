@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Protocol
 
-from capm.domains.prediction.entities import (
+from capm.domains.prediction import (
     ForecastDataset,
     ForecastRequest,
+    PredictionJournalEntry,
+    PredictionJournalSettlement,
+    PredictionJournalSummary,
     SequencePredictionInput,
     SequenceTrainingInput,
     StatisticalPredictionInput,
@@ -55,3 +59,32 @@ class ArtifactStorePort(Protocol):
 
     def write_pickle(self, *, run_id: str, relative_path: str, payload: Any) -> str:
         """Persist one pickle payload and return its path."""
+
+
+class PredictionJournalRepositoryPort(Protocol):
+    """Persists and settles runtime prediction journal rows."""
+
+    def save_prediction_journal_entry(self, entry: PredictionJournalEntry) -> PredictionJournalEntry:
+        """Insert or return one idempotent prediction journal row."""
+
+    def get_unsettled_prediction_journal_entries(
+        self,
+        symbol: str,
+        interval: str,
+        until: datetime,
+        limit: int = 1000,
+    ) -> tuple[PredictionJournalEntry, ...]:
+        """Return unsettled entries whose target prediction time has passed."""
+
+    def settle_prediction_journal_entry(self, settlement: PredictionJournalSettlement) -> PredictionJournalEntry:
+        """Persist actual outcome fields for one journal entry."""
+
+    def summarize_prediction_journal(
+        self,
+        symbol: str,
+        interval: str,
+        start_time: datetime,
+        end_time: datetime,
+        model_name: str | None = None,
+    ) -> PredictionJournalSummary:
+        """Return aggregate journal metrics for a time range."""

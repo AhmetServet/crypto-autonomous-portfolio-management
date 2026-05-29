@@ -12,6 +12,7 @@ from sqlalchemy import inspect, select
 
 from capm.domains.features import ComputedIndicatorSet, GAP_REASON_MISSING_DERIVED_ROWS
 from capm.domains.market_data import OHLCV
+from capm.domains.prediction import PredictionJournalEntry, PredictionJournalSettlement
 from capm.infra.database.models import get_coinpair_model, get_coverage_model, get_feature_model, get_ohlcv_model
 from capm.infra.database.timescale import TimescaleMarketDataRepository
 
@@ -354,6 +355,64 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
         self.assertIsNotNone(window)
         self.assertFalse(window.is_complete)
         self.assertEqual(window.gap_reason, GAP_REASON_MISSING_DERIVED_ROWS)
+
+    def test_repository_persists_settles_and_summarizes_prediction_journal(self) -> None:
+        entry = PredictionJournalEntry(
+            id=None,
+            created_at=None,
+            updated_at=None,
+            symbol="BTCUSDT",
+            interval="1m",
+            model_name="xgboost",
+            artifact_kind="production_tabular",
+            artifact_path="experiments/results/run/model.pkl",
+            artifact_sha256="a" * 64,
+            reference_time=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+            prediction_time=datetime(2024, 1, 1, 0, 15, tzinfo=UTC),
+            forecast_horizon=15,
+            target_field="close",
+            target_mode="return",
+            reference_value=100.0,
+            predicted_value=102.0,
+            predicted_return=0.02,
+            predicted_direction="up",
+            feature_names=("sma_3_close",),
+            metadata={"source": "test"},
+        )
+
+        saved = self.repository.save_prediction_journal_entry(entry)
+        duplicate = self.repository.save_prediction_journal_entry(entry)
+        unsettled = self.repository.get_unsettled_prediction_journal_entries(
+            "BTCUSDT",
+            "1m",
+            datetime(2024, 1, 1, 0, 16, tzinfo=UTC),
+        )
+        settled = self.repository.settle_prediction_journal_entry(
+            PredictionJournalSettlement(
+                journal_id=int(saved.id),
+                actual_value=103.0,
+                actual_return=0.03,
+                actual_direction="up",
+                absolute_error=1.0,
+                absolute_percentage_error=1.0 / 103.0,
+                direction_correct=True,
+                settled_at=datetime(2024, 1, 1, 0, 16, tzinfo=UTC),
+            )
+        )
+        summary = self.repository.summarize_prediction_journal(
+            "BTCUSDT",
+            "1m",
+            datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+            datetime(2024, 1, 1, 0, 20, tzinfo=UTC),
+        )
+
+        self.assertEqual(saved.id, duplicate.id)
+        self.assertEqual(len(unsettled), 1)
+        self.assertEqual(settled.actual_value, 103.0)
+        self.assertEqual(summary.prediction_count, 1)
+        self.assertEqual(summary.settled_count, 1)
+        self.assertAlmostEqual(summary.mape, 1.0 / 103.0)
+        self.assertEqual(summary.direction_accuracy, 1.0)
 
 
 if __name__ == "__main__":
