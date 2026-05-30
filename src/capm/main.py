@@ -14,6 +14,8 @@ from capm.infra.exchange import BinanceSpotMarketDataAdapter
 from capm.services.ingestion import BinancePublicDumpIngestionService, HistoricalMarketDataIngestionService
 from capm.services.prediction_journal import PredictionJournalService
 from capm.services.prediction_runtime import PredictionRuntimeService
+from capm.services.trading_agent import TradingAgentService
+from capm.domains.trading import PortfolioSnapshot, RiskConfig
 
 
 def parse_datetime(value: str) -> datetime:
@@ -187,6 +189,26 @@ def build_parser() -> argparse.ArgumentParser:
     summary_parser.add_argument("--end", required=True, help="Exclusive end datetime in ISO-8601 format.")
     summary_parser.add_argument("--model-name", default=None, help="Optional model name filter.")
 
+    agent_parser = subparsers.add_parser("agent", help="Run and inspect Spot Demo trading-agent cycles.")
+    agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
+    run_once_parser = agent_subparsers.add_parser("run-once", help="Run one auditable trading-agent cycle.")
+    run_once_parser.add_argument("--symbol", required=True, help="Trading pair, e.g. BTCUSDT.")
+    run_once_parser.add_argument("--interval", required=True, help="Candle interval, e.g. 1m.")
+    run_once_parser.add_argument("--mode", default="dry-run", choices=["dry-run", "spot-demo"])
+    run_once_parser.add_argument("--dry-run-usdt-balance", type=float, default=1000.0)
+    run_once_parser.add_argument("--dry-run-base-asset-balance", type=float, default=0.0)
+    run_once_parser.add_argument("--max-trade-usdt", type=float, default=25.0)
+    run_once_parser.add_argument("--max-position-usdt", type=float, default=100.0)
+    run_once_parser.add_argument("--min-predicted-return", type=float, default=0.0005)
+    run_once_parser.add_argument("--prediction-staleness-minutes", type=int, default=5)
+    agent_journal_parser = agent_subparsers.add_parser("journal", help="Inspect agent decision journal rows.")
+    agent_journal_subparsers = agent_journal_parser.add_subparsers(dest="agent_journal_command", required=True)
+    agent_summary_parser = agent_journal_subparsers.add_parser("summary", help="Summarize agent decision journal rows.")
+    agent_summary_parser.add_argument("--symbol", required=True, help="Trading pair, e.g. BTCUSDT.")
+    agent_summary_parser.add_argument("--interval", required=True, help="Candle interval, e.g. 1m.")
+    agent_summary_parser.add_argument("--start", required=True, help="Inclusive start datetime in ISO-8601 format.")
+    agent_summary_parser.add_argument("--end", required=True, help="Exclusive end datetime in ISO-8601 format.")
+
     return parser
 
 
@@ -356,6 +378,49 @@ def main() -> None:
             start_time=parse_datetime(args.start),
             end_time=parse_datetime(args.end),
             model_name=args.model_name,
+        )
+        print_json({"status": "ok", "summary": summary.to_dict()})
+        return
+
+    if args.command == "agent" and args.agent_command == "run-once":
+        repository = build_repository()
+        entry = TradingAgentService(repository=repository).run_once(
+            symbol=args.symbol,
+            interval=args.interval,
+            mode=args.mode,
+            portfolio=PortfolioSnapshot(
+                available_usdt=args.dry_run_usdt_balance,
+                base_asset_free=args.dry_run_base_asset_balance,
+            ),
+            risk_config=RiskConfig(
+                max_trade_usdt=args.max_trade_usdt,
+                max_position_usdt=args.max_position_usdt,
+                min_predicted_return=args.min_predicted_return,
+                prediction_staleness_minutes=args.prediction_staleness_minutes,
+            ),
+        )
+        print_json(
+            {
+                "status": "ok",
+                "cycle_id": entry.cycle_id,
+                "mode": entry.mode,
+                "symbol": entry.symbol,
+                "interval": entry.interval,
+                "action": entry.action,
+                "risk_status": entry.risk_status,
+                "execution_status": entry.execution_status,
+                "journal_id": entry.id,
+            }
+        )
+        return
+
+    if args.command == "agent" and args.agent_command == "journal" and args.agent_journal_command == "summary":
+        repository = build_repository()
+        summary = repository.summarize_agent_decision_journal(
+            symbol=args.symbol,
+            interval=args.interval,
+            start_time=parse_datetime(args.start),
+            end_time=parse_datetime(args.end),
         )
         print_json({"status": "ok", "summary": summary.to_dict()})
         return

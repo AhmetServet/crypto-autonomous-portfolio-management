@@ -10,6 +10,9 @@ from .features import (
 from .ingestion import HistoricalMarketDataIngestionService
 from .prediction_journal import PredictionJournalService, artifact_sha256
 from .prediction_runtime import PredictionRuntimeService, RuntimePrediction
+from .decision_policy import ThresholdDecisionPolicy
+from .risk_control import RiskControlService
+from .trading_agent import TradingAgentService
 from .training import (
     DeepLearningProductionTrainer,
     DeepLearningTrainingResult,
@@ -38,8 +41,11 @@ __all__ = [
     "PredictionJournalService",
     "PredictionRuntimeService",
     "RuntimePrediction",
+    "RiskControlService",
     "StatisticalDatasetAdapter",
     "TabularDatasetAdapter",
+    "ThresholdDecisionPolicy",
+    "TradingAgentService",
     "WalkForwardExperimentRunner",
     "build_signal_map",
     "artifact_sha256",

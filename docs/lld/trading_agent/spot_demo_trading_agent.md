@@ -611,6 +611,22 @@ Future branches should add:
 - strategy-level backtest replay using the same decision policy
 - dashboard/API views for decision journals and risk events
 
+## 19.1 Current Implementation Status
+Implemented in the first dry-run foundation:
+- trading-agent domain entities and contracts
+- shared `agent_decision_journal` persistence and summary reads
+- idempotent cycle writes
+- deterministic threshold policy
+- hard risk-control validation
+- `capm agent run-once --mode dry-run`
+- `capm agent journal summary`
+- repository and service tests
+
+Deferred to the next implementation step:
+- OpenRouter or other LLM decision-policy adapter
+- Binance Spot Demo authenticated execution adapter
+- `capm agent run-once --mode spot-demo` execution
+
 ## 20. Open Questions
 Open questions before implementation:
 - Should `hold` decisions be journaled for every symbol every minute in scheduled mode, or sampled to reduce storage?

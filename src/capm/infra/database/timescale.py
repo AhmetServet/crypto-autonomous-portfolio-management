@@ -32,11 +32,14 @@ from capm.domains.prediction import (
     prediction_direction,
     rmse,
 )
+from capm.domains.trading import AgentDecisionJournalEntry, AgentDecisionJournalSummary
 from capm.infra.database.models import (
+    agent_decision_journal_to_record,
     build_feature_table_name,
     build_ohlcv_table_name,
     candle_to_record,
     get_coinpair_model,
+    get_agent_decision_journal_model,
     get_coverage_model,
     get_feature_model,
     get_ohlcv_model,
@@ -89,6 +92,7 @@ class TimescaleMarketDataRepository:
         self._feature_coverage_model = get_coverage_model("feature_coverage", self._schema_name)
         self._indicator_coverage_model = get_coverage_model("indicator_coverage", self._schema_name)
         self._prediction_journal_model = get_prediction_journal_model(self._schema_name)
+        self._agent_decision_journal_model = get_agent_decision_journal_model(self._schema_name)
 
     def initialize_schema(self, symbols: Iterable[str] | None = None) -> None:
         """Create metadata plus optional coinpair-scoped market and feature tables."""
@@ -121,6 +125,7 @@ class TimescaleMarketDataRepository:
             self._feature_coverage_model,
             self._indicator_coverage_model,
             self._prediction_journal_model,
+            self._agent_decision_journal_model,
         ):
             self._ensure_static_table(model)
 
@@ -863,6 +868,34 @@ class TimescaleMarketDataRepository:
             )
             return tuple(row.to_domain() for row in session.scalars(stmt).all())
 
+    def get_latest_prediction_journal_entries(
+        self,
+        symbol: str,
+        interval: str,
+        reference_time: datetime,
+        stale_after: timedelta,
+    ) -> tuple[PredictionJournalEntry, ...]:
+        """Return the newest usable prediction rows grouped by model artifact."""
+        self._ensure_static_table(self._prediction_journal_model)
+        normalized_symbol = normalize_symbol(symbol)
+        normalized_time = ensure_utc(reference_time)
+        with self._session_factory() as session:
+            stmt = (
+                select(self._prediction_journal_model)
+                .where(
+                    self._prediction_journal_model.symbol == normalized_symbol,
+                    self._prediction_journal_model.interval == interval,
+                    self._prediction_journal_model.reference_time <= normalized_time,
+                    self._prediction_journal_model.reference_time >= normalized_time - stale_after,
+                )
+                .order_by(self._prediction_journal_model.reference_time.desc())
+            )
+            rows = [row.to_domain() for row in session.scalars(stmt).all()]
+        newest_by_artifact: dict[tuple[str, str], PredictionJournalEntry] = {}
+        for row in rows:
+            newest_by_artifact.setdefault((row.model_name, row.artifact_sha256), row)
+        return tuple(newest_by_artifact.values())
+
     def settle_prediction_journal_entry(self, settlement: PredictionJournalSettlement) -> PredictionJournalEntry:
         """Persist actual outcome fields for one journal entry."""
         self._ensure_static_table(self._prediction_journal_model)
@@ -938,10 +971,81 @@ class TimescaleMarketDataRepository:
             actual_direction_counts=actual_counts,
         )
 
+    def save_agent_decision_journal_entry(self, entry: AgentDecisionJournalEntry) -> AgentDecisionJournalEntry:
+        """Insert or return one idempotent agent decision journal row."""
+        self._ensure_static_table(self._agent_decision_journal_model)
+        now = datetime.now(UTC)
+        payload = agent_decision_journal_to_record(entry)
+        payload["created_at"] = entry.created_at or now
+        payload["updated_at"] = now
+        with self._session_factory() as session:
+            existing_stmt = select(self._agent_decision_journal_model).where(
+                self._agent_decision_journal_model.cycle_id == entry.cycle_id,
+                self._agent_decision_journal_model.symbol == entry.symbol,
+                self._agent_decision_journal_model.interval == entry.interval,
+            )
+            existing = session.scalars(existing_stmt).first()
+            if existing is not None:
+                return existing.to_domain()
+            row = self._agent_decision_journal_model(**payload)
+            session.add(row)
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                existing = session.scalars(existing_stmt).first()
+                if existing is None:
+                    raise
+                return existing.to_domain()
+            session.refresh(row)
+            return row.to_domain()
+
+    def summarize_agent_decision_journal(
+        self,
+        symbol: str,
+        interval: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> AgentDecisionJournalSummary:
+        """Return aggregate decision counts for one time range."""
+        self._ensure_static_table(self._agent_decision_journal_model)
+        normalized_symbol = normalize_symbol(symbol)
+        normalized_start = ensure_utc(start_time)
+        normalized_end = ensure_utc(end_time)
+        with self._session_factory() as session:
+            stmt = select(self._agent_decision_journal_model).where(
+                self._agent_decision_journal_model.symbol == normalized_symbol,
+                self._agent_decision_journal_model.interval == interval,
+                self._agent_decision_journal_model.reference_time >= normalized_start,
+                self._agent_decision_journal_model.reference_time < normalized_end,
+            )
+            rows = [row.to_domain() for row in session.scalars(stmt).all()]
+        return AgentDecisionJournalSummary(
+            symbol=normalized_symbol,
+            interval=interval,
+            start_time=normalized_start,
+            end_time=normalized_end,
+            decision_count=len(rows),
+            action_counts=self._value_counts((row.action for row in rows), ("buy", "sell", "hold")),
+            risk_status_counts=self._value_counts((row.risk_status for row in rows), ("approved", "rejected", "skipped")),
+            execution_status_counts=self._value_counts(
+                (row.execution_status for row in rows),
+                ("not_submitted", "submitted", "filled", "partially_filled", "cancelled", "rejected", "failed"),
+            ),
+            mode_counts=self._value_counts((row.mode for row in rows), ("dry_run", "spot_demo")),
+        )
+
     @staticmethod
     def _direction_counts(values: Iterable[str | None]) -> dict[str, int]:
         counts = {"up": 0, "down": 0, "flat": 0}
         for value in values:
             if value in counts:
                 counts[value] += 1
+        return counts
+
+    @staticmethod
+    def _value_counts(values: Iterable[str], allowed: tuple[str, ...]) -> dict[str, int]:
+        counts = {value: 0 for value in allowed}
+        for value in values:
+            counts[value] = counts.get(value, 0) + 1
         return counts

@@ -13,6 +13,7 @@ from sqlalchemy import inspect, select
 from capm.domains.features import ComputedIndicatorSet, GAP_REASON_MISSING_DERIVED_ROWS
 from capm.domains.market_data import OHLCV
 from capm.domains.prediction import PredictionJournalEntry, PredictionJournalSettlement
+from capm.domains.trading import AgentDecisionJournalEntry
 from capm.infra.database.models import get_coinpair_model, get_coverage_model, get_feature_model, get_ohlcv_model
 from capm.infra.database.timescale import TimescaleMarketDataRepository
 
@@ -413,6 +414,38 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
         self.assertEqual(summary.settled_count, 1)
         self.assertAlmostEqual(summary.mape, 1.0 / 103.0)
         self.assertEqual(summary.direction_accuracy, 1.0)
+
+    def test_repository_persists_and_summarizes_agent_decision_journal(self) -> None:
+        entry = AgentDecisionJournalEntry(
+            cycle_id="2024-01-01T00:00:00+00:00:BTCUSDT:1m:dry_run",
+            mode="dry-run",
+            symbol="BTCUSDT",
+            interval="1m",
+            reference_time=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+            action="buy",
+            requested_usdt_amount=25.0,
+            confidence=0.01,
+            reason="xgboost predicted up above threshold",
+            prediction_journal_ids=(7,),
+            risk_status="approved",
+            execution_status="not_submitted",
+        )
+
+        saved = self.repository.save_agent_decision_journal_entry(entry)
+        duplicate = self.repository.save_agent_decision_journal_entry(entry)
+        summary = self.repository.summarize_agent_decision_journal(
+            "BTCUSDT",
+            "1m",
+            datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+            datetime(2024, 1, 1, 0, 1, tzinfo=UTC),
+        )
+
+        self.assertEqual(saved.id, duplicate.id)
+        self.assertEqual(saved.mode, "dry_run")
+        self.assertEqual(summary.decision_count, 1)
+        self.assertEqual(summary.action_counts["buy"], 1)
+        self.assertEqual(summary.risk_status_counts["approved"], 1)
+        self.assertEqual(summary.execution_status_counts["not_submitted"], 1)
 
 
 if __name__ == "__main__":

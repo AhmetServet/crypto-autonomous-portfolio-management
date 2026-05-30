@@ -191,3 +191,25 @@ uv run capm prediction-journal summary \
   --start 2026-05-01T00:00:00Z \
   --end 2026-05-30T00:00:00Z
 ```
+
+### Trading-agent dry run
+Run one deterministic, auditable dry-run decision against the latest stored candle and recent prediction-journal rows:
+
+```bash
+uv run capm agent run-once \
+  --symbol BTCUSDT \
+  --interval 1m \
+  --mode dry-run
+```
+
+This first slice writes to `agent_decision_journal`, applies hard risk checks, and never submits exchange orders. Spot Demo execution and the LLM decision policy are added after this dry-run foundation.
+
+Summarize recorded decisions:
+
+```bash
+uv run capm agent journal summary \
+  --symbol BTCUSDT \
+  --interval 1m \
+  --start 2026-05-01T00:00:00Z \
+  --end 2026-05-30T00:00:00Z
+```
