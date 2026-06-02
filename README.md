@@ -202,7 +202,7 @@ uv run capm agent run-once \
   --mode dry-run
 ```
 
-This slice writes to `agent_decision_journal`, applies hard risk checks, and never submits exchange orders. Spot Demo order execution is added after the dry-run decision path.
+Dry-run writes to `agent_decision_journal`, applies hard risk checks, and never submits exchange orders. The Spot Demo path uses the same journal and risk gate before optional Demo order execution.
 
 Run one LLM decision call across every symbol that currently has stored candles:
 
@@ -248,7 +248,7 @@ uv run capm agent run-once \
   --show-prompt
 ```
 
-Spot Demo execution reads balances from Binance, applies the same hard risk gate, and submits only approved market orders. The adapter refuses the live Binance REST host.
+Spot Demo execution reads balances from Binance, applies the same hard risk gate, and submits only approved market orders. Before submission, the adapter caches Binance symbol filters, validates minimum notional values, and normalizes sell quantities to the allowed market step size. After submission, the agent persists the initial response and reconciles the latest order status. The adapter refuses the live Binance REST host.
 
 Read Spot Demo balances without placing an order:
 

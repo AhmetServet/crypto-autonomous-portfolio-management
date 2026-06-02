@@ -145,10 +145,19 @@ class TradingAgentService:
                 entry = self._repository.update_agent_decision_execution(
                     int(entry.id),
                     execution_status=str(response.get("status", "submitted")).lower(),
-                    exchange_response=response,
+                    exchange_response={"submission": response},
                     exchange_order_id=str(response["orderId"]) if "orderId" in response else None,
                     exchange_client_order_id=response.get("clientOrderId"),
                 )
+                if entry.exchange_order_id is not None:
+                    reconciled = self._exchange_adapter.get_order(request.symbol, entry.exchange_order_id)
+                    entry = self._repository.update_agent_decision_execution(
+                        int(entry.id),
+                        execution_status=str(reconciled.get("status", entry.execution_status)).lower(),
+                        exchange_response={"submission": response, "reconciliation": reconciled},
+                        exchange_order_id=entry.exchange_order_id,
+                        exchange_client_order_id=entry.exchange_client_order_id,
+                    )
             entries.append(entry)
         return tuple(entries)
 

@@ -622,10 +622,6 @@ Implemented in the first dry-run foundation:
 - `capm agent journal summary`
 - repository and service tests
 
-Deferred to the next implementation step:
-- exchange symbol filters and precision-aware quantity rounding
-- order status reconciliation beyond the initial submit response
-
 Implemented in the LLM decision step:
 - discover symbols dynamically from DB coinpairs that contain candles for the requested interval
 - make one OpenAI-compatible chat-completions call for the available symbol set
@@ -650,6 +646,11 @@ Implemented in the Spot Demo execution step:
 - update `agent_decision_journal` with exchange order IDs, status, and raw response
 - skip duplicate submission when a retried cycle already has an exchange result
 - add explicit `capm spot-demo account` and confirmed `capm spot-demo test-market-buy` smoke-test commands
+- cache exchange symbol filters before submission
+- reject market buys below minimum notional values
+- normalize market sell quantities to the allowed market step size
+- persist the initial submit response before querying the latest order status
+- reconcile the submitted order with signed `GET /api/v3/order`
 
 ## 20. Open Questions
 Open questions before implementation:

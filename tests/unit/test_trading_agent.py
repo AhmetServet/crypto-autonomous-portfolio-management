@@ -89,7 +89,8 @@ class TradingRepository:
         return saved
 
     def update_agent_decision_execution(self, journal_id, **values):
-        return replace(self.saved[-1], **values)
+        self.saved[-1] = replace(self.saved[-1], **values)
+        return self.saved[-1]
 
     def get_available_symbols(self, interval):
         return ("BTCUSDT",)
@@ -202,6 +203,9 @@ class TradingAgentTests(unittest.TestCase):
             def submit_market_order(self, symbol, decision):
                 return {"orderId": 123, "clientOrderId": "abc", "status": "FILLED"}
 
+            def get_order(self, symbol, order_id):
+                return {"orderId": int(order_id), "clientOrderId": "abc", "status": "FILLED"}
+
         entries = TradingAgentService(repository=TradingRepository(), exchange_adapter=Exchange()).run_llm_once(
             interval="1m",
             mode="spot-demo",
@@ -210,6 +214,7 @@ class TradingAgentTests(unittest.TestCase):
 
         self.assertEqual(entries[0].execution_status, "filled")
         self.assertEqual(entries[0].exchange_order_id, "123")
+        self.assertEqual(entries[0].exchange_response["reconciliation"]["status"], "FILLED")
 
 
 if __name__ == "__main__":
