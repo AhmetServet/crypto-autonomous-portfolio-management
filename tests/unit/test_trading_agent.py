@@ -10,6 +10,8 @@ import unittest
 from capm.domains.market_data import OHLCV
 from capm.domains.prediction import PredictionJournalEntry
 from capm.domains.trading import PortfolioSnapshot, RiskConfig
+from capm.domains.trading import DecisionAction, ProposedDecision
+from capm.services.llm_decision_policy import LLMDecisionBatch
 from capm.services.trading_agent import TradingAgentService
 
 
@@ -80,6 +82,9 @@ class TradingRepository:
         self.saved.append(saved)
         return saved
 
+    def get_available_symbols(self, interval):
+        return ("BTCUSDT",)
+
 
 class TradingAgentTests(unittest.TestCase):
     """Exercise deterministic policy, risk gate, and journaling."""
@@ -135,6 +140,32 @@ class TradingAgentTests(unittest.TestCase):
 
         self.assertEqual(entry.action, "hold")
         self.assertEqual(entry.risk_status, "skipped")
+
+    def test_llm_path_uses_dynamic_symbols_and_journals_provider_metadata(self) -> None:
+        class Policy:
+            def decide_batch(self, requests):
+                return LLMDecisionBatch(
+                    decisions={
+                        "BTCUSDT": ProposedDecision(
+                            action=DecisionAction.HOLD,
+                            confidence=0.4,
+                            reason="wait",
+                        )
+                    },
+                    system_prompt="system prompt",
+                    prompt="prompt",
+                    raw_response="response",
+                    attempts=1,
+                )
+
+        repository = TradingRepository()
+
+        entries = TradingAgentService(repository=repository).run_llm_once(interval="1m", llm_policy=Policy())
+
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].symbol, "BTCUSDT")
+        self.assertEqual(entries[0].metadata["policy"], "llm")
+        self.assertEqual(entries[0].metadata["llm_raw_response"], "response")
 
 
 if __name__ == "__main__":

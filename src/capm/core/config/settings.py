@@ -12,6 +12,7 @@ from capm.core.errors import ConfigurationError
 DEMO_SPOT_REST_BASE_URL = "https://demo-api.binance.com"
 LIVE_SPOT_REST_BASE_URL = "https://api.binance.com"
 SUPPORTED_BINANCE_MODES = {"demo", "live"}
+DEFAULT_LLM_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 def load_environment(env_file: str | None = None) -> None:
@@ -125,4 +126,39 @@ class DatabaseSettings:
             schema_name=schema_name,
             ohlcv_write_batch_size=ohlcv_write_batch_size,
             hide_sql_parameters=hide_sql_parameters,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class LLMSettings:
+    """Runtime settings for an OpenAI-compatible chat-completions API."""
+
+    api_key: str
+    model: str
+    base_url: str = DEFAULT_LLM_BASE_URL
+    request_timeout_seconds: float = 30.0
+    retry_attempts: int = 3
+
+    def __post_init__(self) -> None:
+        if not self.api_key.strip():
+            raise ConfigurationError("LLM API key cannot be empty.")
+        if not self.model.strip():
+            raise ConfigurationError("LLM model cannot be empty.")
+        if not self.base_url.strip():
+            raise ConfigurationError("LLM base URL cannot be empty.")
+        if self.request_timeout_seconds <= 0:
+            raise ConfigurationError("LLM request timeout must be greater than zero.")
+        if self.retry_attempts < 1:
+            raise ConfigurationError("LLM retry attempts must be at least one.")
+
+    @classmethod
+    def from_env(cls, *, env_file: str | None = None) -> "LLMSettings":
+        """Build provider-compatible LLM settings from environment variables."""
+        load_environment(env_file)
+        return cls(
+            api_key=os.getenv("CAPM_LLM_API_KEY", "").strip(),
+            model=os.getenv("CAPM_LLM_MODEL", "").strip(),
+            base_url=os.getenv("CAPM_LLM_BASE_URL", DEFAULT_LLM_BASE_URL).strip().rstrip("/"),
+            request_timeout_seconds=float(os.getenv("CAPM_LLM_TIMEOUT_SECONDS", "30")),
+            retry_attempts=int(os.getenv("CAPM_LLM_RETRY_ATTEMPTS", "3")),
         )

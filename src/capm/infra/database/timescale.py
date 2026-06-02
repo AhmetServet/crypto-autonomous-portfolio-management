@@ -618,6 +618,13 @@ class TimescaleMarketDataRepository:
             latest = session.scalar(stmt)
             return ensure_utc(latest) if latest else None
 
+    def get_available_symbols(self, interval: str) -> tuple[str, ...]:
+        """Return registered symbols that currently have stored candles for an interval."""
+        self._ensure_metadata_tables()
+        with self._session_factory() as session:
+            symbols = tuple(session.scalars(select(self._coinpair_model.symbol).order_by(self._coinpair_model.symbol.asc())).all())
+        return tuple(symbol for symbol in symbols if self.get_latest_candle_time(symbol, interval) is not None)
+
     def get_latest_indicator_time(self, symbol: str, interval: str) -> datetime | None:
         """Read the open_time of the latest stored indicator row for a symbol and interval."""
         model = self._get_existing_feature_model(symbol)

@@ -6,7 +6,7 @@ import argparse
 import json
 from datetime import UTC, datetime
 
-from capm.core.config import BinanceSettings, DatabaseSettings
+from capm.core.config import BinanceSettings, DatabaseSettings, LLMSettings
 from capm.domains.market_data import HistoricalOHLCRequest, interval_to_timedelta
 from capm.init_db import initialize_database
 from capm.infra.database.timescale import TimescaleMarketDataRepository
@@ -15,6 +15,7 @@ from capm.services.ingestion import BinancePublicDumpIngestionService, Historica
 from capm.services.prediction_journal import PredictionJournalService
 from capm.services.prediction_runtime import PredictionRuntimeService
 from capm.services.trading_agent import TradingAgentService
+from capm.services.llm_decision_policy import LLMDecisionPolicy
 from capm.domains.trading import PortfolioSnapshot, RiskConfig
 
 
@@ -68,6 +69,20 @@ def build_repository() -> TimescaleMarketDataRepository:
 def print_json(payload: dict[str, object]) -> None:
     """Print a JSON response payload."""
     print(json.dumps(payload, indent=2, default=str))
+
+
+def _agent_decision_payload(entry) -> dict[str, object]:
+    """Build the stable CLI representation for one journaled agent decision."""
+    return {
+        "cycle_id": entry.cycle_id,
+        "mode": entry.mode,
+        "symbol": entry.symbol,
+        "interval": entry.interval,
+        "action": entry.action,
+        "risk_status": entry.risk_status,
+        "execution_status": entry.execution_status,
+        "journal_id": entry.id,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -192,9 +207,15 @@ def build_parser() -> argparse.ArgumentParser:
     agent_parser = subparsers.add_parser("agent", help="Run and inspect Spot Demo trading-agent cycles.")
     agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
     run_once_parser = agent_subparsers.add_parser("run-once", help="Run one auditable trading-agent cycle.")
-    run_once_parser.add_argument("--symbol", required=True, help="Trading pair, e.g. BTCUSDT.")
+    run_once_parser.add_argument("--symbol", default=None, help="Trading pair for threshold policy, e.g. BTCUSDT.")
     run_once_parser.add_argument("--interval", required=True, help="Candle interval, e.g. 1m.")
     run_once_parser.add_argument("--mode", default="dry-run", choices=["dry-run", "spot-demo"])
+    run_once_parser.add_argument("--policy", default="threshold", choices=["threshold", "llm"])
+    run_once_parser.add_argument(
+        "--show-prompt",
+        action="store_true",
+        help="Include the exact LLM system and user prompts in the CLI output.",
+    )
     run_once_parser.add_argument("--dry-run-usdt-balance", type=float, default=1000.0)
     run_once_parser.add_argument("--dry-run-base-asset-balance", type=float, default=0.0)
     run_once_parser.add_argument("--max-trade-usdt", type=float, default=25.0)
@@ -384,34 +405,55 @@ def main() -> None:
 
     if args.command == "agent" and args.agent_command == "run-once":
         repository = build_repository()
-        entry = TradingAgentService(repository=repository).run_once(
-            symbol=args.symbol,
-            interval=args.interval,
-            mode=args.mode,
-            portfolio=PortfolioSnapshot(
-                available_usdt=args.dry_run_usdt_balance,
-                base_asset_free=args.dry_run_base_asset_balance,
-            ),
-            risk_config=RiskConfig(
-                max_trade_usdt=args.max_trade_usdt,
-                max_position_usdt=args.max_position_usdt,
-                min_predicted_return=args.min_predicted_return,
-                prediction_staleness_minutes=args.prediction_staleness_minutes,
-            ),
+        portfolio = PortfolioSnapshot(
+            available_usdt=args.dry_run_usdt_balance,
+            base_asset_free=args.dry_run_base_asset_balance,
         )
-        print_json(
-            {
-                "status": "ok",
-                "cycle_id": entry.cycle_id,
-                "mode": entry.mode,
-                "symbol": entry.symbol,
-                "interval": entry.interval,
-                "action": entry.action,
-                "risk_status": entry.risk_status,
-                "execution_status": entry.execution_status,
-                "journal_id": entry.id,
+        risk_config = RiskConfig(
+            max_trade_usdt=args.max_trade_usdt,
+            max_position_usdt=args.max_position_usdt,
+            min_predicted_return=args.min_predicted_return,
+            prediction_staleness_minutes=args.prediction_staleness_minutes,
+        )
+        service = TradingAgentService(repository=repository)
+        if args.policy == "llm":
+            llm_policy = LLMDecisionPolicy(LLMSettings.from_env())
+            try:
+                entries = service.run_llm_once(
+                    interval=args.interval,
+                    mode=args.mode,
+                    portfolio=portfolio,
+                    risk_config=risk_config,
+                    llm_policy=llm_policy,
+                )
+            finally:
+                llm_policy.close()
+        else:
+            if not args.symbol:
+                parser.error("agent run-once --policy threshold requires --symbol")
+            entries = (
+                service.run_once(
+                    symbol=args.symbol,
+                    interval=args.interval,
+                    mode=args.mode,
+                    portfolio=portfolio,
+                    risk_config=risk_config,
+                ),
+            )
+        payload = {"status": "ok", "decisions": [_agent_decision_payload(entry) for entry in entries]}
+        if args.show_prompt:
+            if args.policy != "llm":
+                parser.error("agent run-once --show-prompt requires --policy llm")
+            batch = service.last_llm_batch
+            if batch is None:
+                raise RuntimeError("LLM prompt metadata was not produced.")
+            payload["llm"] = {
+                "system_prompt": batch.system_prompt,
+                "prompt": batch.prompt,
+                "raw_response": batch.raw_response,
+                "attempts": batch.attempts,
             }
-        )
+        print_json(payload)
         return
 
     if args.command == "agent" and args.agent_command == "journal" and args.agent_journal_command == "summary":

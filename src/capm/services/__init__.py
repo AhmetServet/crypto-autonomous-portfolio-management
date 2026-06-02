@@ -13,6 +13,7 @@ from .prediction_runtime import PredictionRuntimeService, RuntimePrediction
 from .decision_policy import ThresholdDecisionPolicy
 from .risk_control import RiskControlService
 from .trading_agent import TradingAgentService
+from .llm_decision_policy import LLMDecisionBatch, LLMDecisionPolicy
 from .training import (
     DeepLearningProductionTrainer,
     DeepLearningTrainingResult,
@@ -36,6 +37,8 @@ __all__ = [
     "DeepLearningTrainingResult",
     "FeatureScaler",
     "LocalArtifactStore",
+    "LLMDecisionBatch",
+    "LLMDecisionPolicy",
     "PredictionSignalStrategy",
     "PredictionDatasetLoader",
     "PredictionJournalService",

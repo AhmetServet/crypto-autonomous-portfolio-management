@@ -202,7 +202,27 @@ uv run capm agent run-once \
   --mode dry-run
 ```
 
-This first slice writes to `agent_decision_journal`, applies hard risk checks, and never submits exchange orders. Spot Demo execution and the LLM decision policy are added after this dry-run foundation.
+This slice writes to `agent_decision_journal`, applies hard risk checks, and never submits exchange orders. Spot Demo order execution is added after the dry-run decision path.
+
+Run one LLM decision call across every symbol that currently has stored candles:
+
+```bash
+uv run capm agent run-once \
+  --interval 1m \
+  --mode dry-run \
+  --policy llm \
+  --show-prompt
+```
+
+Configure an OpenAI-compatible provider through:
+
+```text
+CAPM_LLM_BASE_URL=https://openrouter.ai/api/v1
+CAPM_LLM_API_KEY=<provider API key>
+CAPM_LLM_MODEL=<provider model identifier>
+```
+
+OpenRouter is the default base URL. Change the URL, key, and model to use another compatible chat-completions provider.
 
 Summarize recorded decisions:
 

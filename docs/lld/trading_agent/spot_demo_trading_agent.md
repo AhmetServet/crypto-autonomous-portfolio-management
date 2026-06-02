@@ -603,7 +603,7 @@ Reason:
 ## 19. Future Work
 Future branches should add:
 - scan-universe batch cycle across inventory and top-20 watchlist
-- OpenRouter or other LLM decision-policy adapter
+- provider-specific prompt tuning and optional additional LLM adapters
 - prompt and response journal for AI decisions
 - per-minute scheduler with lock and timeout handling
 - account websocket stream for execution updates
@@ -623,9 +623,21 @@ Implemented in the first dry-run foundation:
 - repository and service tests
 
 Deferred to the next implementation step:
-- OpenRouter or other LLM decision-policy adapter
 - Binance Spot Demo authenticated execution adapter
 - `capm agent run-once --mode spot-demo` execution
+
+Implemented in the LLM decision step:
+- discover symbols dynamically from DB coinpairs that contain candles for the requested interval
+- make one OpenAI-compatible chat-completions call for the available symbol set
+- support OpenRouter by default with configurable base URL, API key, and model
+- validate strict JSON actions for every requested symbol
+- retry malformed LLM responses up to the configured attempt count
+- journal the prompt, raw response, attempt count, and risk-gated result
+
+Current practical scope:
+- the local database currently determines the coin universe
+- BTCUSDT can be the only available symbol during initial development
+- a curated fixed multi-coin list can be introduced later without changing the LLM batch boundary
 
 ## 20. Open Questions
 Open questions before implementation:
