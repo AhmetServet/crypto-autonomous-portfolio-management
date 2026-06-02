@@ -10,13 +10,13 @@ from capm.core.config import BinanceSettings, DatabaseSettings, LLMSettings
 from capm.domains.market_data import HistoricalOHLCRequest, interval_to_timedelta
 from capm.init_db import initialize_database
 from capm.infra.database.timescale import TimescaleMarketDataRepository
-from capm.infra.exchange import BinanceSpotMarketDataAdapter
+from capm.infra.exchange import BinanceSpotDemoTradingAdapter, BinanceSpotMarketDataAdapter
 from capm.services.ingestion import BinancePublicDumpIngestionService, HistoricalMarketDataIngestionService
 from capm.services.prediction_journal import PredictionJournalService
 from capm.services.prediction_runtime import PredictionRuntimeService
 from capm.services.trading_agent import TradingAgentService
 from capm.services.llm_decision_policy import LLMDecisionPolicy
-from capm.domains.trading import PortfolioSnapshot, RiskConfig
+from capm.domains.trading import DecisionAction, PortfolioSnapshot, ProposedDecision, RiskConfig
 
 
 def parse_datetime(value: str) -> datetime:
@@ -230,6 +230,15 @@ def build_parser() -> argparse.ArgumentParser:
     agent_summary_parser.add_argument("--start", required=True, help="Inclusive start datetime in ISO-8601 format.")
     agent_summary_parser.add_argument("--end", required=True, help="Exclusive end datetime in ISO-8601 format.")
 
+    spot_demo_parser = subparsers.add_parser("spot-demo", help="Run explicit Binance Spot Demo smoke tests.")
+    spot_demo_subparsers = spot_demo_parser.add_subparsers(dest="spot_demo_command", required=True)
+    spot_demo_account_parser = spot_demo_subparsers.add_parser("account", help="Read Spot Demo balances without submitting an order.")
+    spot_demo_account_parser.add_argument("--symbol", default="BTCUSDT", help="USDT trading pair, e.g. BTCUSDT.")
+    spot_demo_buy_parser = spot_demo_subparsers.add_parser("test-market-buy", help="Submit one confirmed Spot Demo market buy.")
+    spot_demo_buy_parser.add_argument("--symbol", default="BTCUSDT", help="USDT trading pair, e.g. BTCUSDT.")
+    spot_demo_buy_parser.add_argument("--usdt-amount", type=float, required=True, help="Quote-currency amount to spend.")
+    spot_demo_buy_parser.add_argument("--confirm", action="store_true", help="Required acknowledgement that a Spot Demo order will be submitted.")
+
     return parser
 
 
@@ -403,6 +412,37 @@ def main() -> None:
         print_json({"status": "ok", "summary": summary.to_dict()})
         return
 
+    if args.command == "spot-demo":
+        if args.spot_demo_command == "test-market-buy":
+            if args.usdt_amount <= 0:
+                parser.error("spot-demo test-market-buy --usdt-amount must be greater than zero")
+            if not args.confirm:
+                parser.error("spot-demo test-market-buy requires --confirm")
+        adapter = BinanceSpotDemoTradingAdapter(BinanceSettings.from_env(mode="demo"))
+        try:
+            before = adapter.get_portfolio(args.symbol)
+            if args.spot_demo_command == "account":
+                print_json({"status": "ok", "symbol": args.symbol, "portfolio": before.to_dict()})
+                return
+            response = adapter.submit_market_order(
+                args.symbol,
+                ProposedDecision(action=DecisionAction.BUY, requested_usdt_amount=args.usdt_amount),
+            )
+            after = adapter.get_portfolio(args.symbol)
+            print_json(
+                {
+                    "status": "ok",
+                    "symbol": args.symbol,
+                    "usdt_amount": args.usdt_amount,
+                    "portfolio_before": before.to_dict(),
+                    "order": response,
+                    "portfolio_after": after.to_dict(),
+                }
+            )
+        finally:
+            adapter.close()
+        return
+
     if args.command == "agent" and args.agent_command == "run-once":
         repository = build_repository()
         portfolio = PortfolioSnapshot(
@@ -415,7 +455,10 @@ def main() -> None:
             min_predicted_return=args.min_predicted_return,
             prediction_staleness_minutes=args.prediction_staleness_minutes,
         )
-        service = TradingAgentService(repository=repository)
+        exchange_adapter = None
+        if args.mode == "spot-demo":
+            exchange_adapter = BinanceSpotDemoTradingAdapter(BinanceSettings.from_env(mode="demo"))
+        service = TradingAgentService(repository=repository, exchange_adapter=exchange_adapter)
         if args.policy == "llm":
             llm_policy = LLMDecisionPolicy(LLMSettings.from_env())
             try:
@@ -428,6 +471,8 @@ def main() -> None:
                 )
             finally:
                 llm_policy.close()
+                if exchange_adapter is not None:
+                    exchange_adapter.close()
         else:
             if not args.symbol:
                 parser.error("agent run-once --policy threshold requires --symbol")
@@ -440,6 +485,8 @@ def main() -> None:
                     risk_config=risk_config,
                 ),
             )
+            if exchange_adapter is not None:
+                exchange_adapter.close()
         payload = {"status": "ok", "decisions": [_agent_decision_payload(entry) for entry in entries]}
         if args.show_prompt:
             if args.policy != "llm":
@@ -452,6 +499,10 @@ def main() -> None:
                 "prompt": batch.prompt,
                 "raw_response": batch.raw_response,
                 "attempts": batch.attempts,
+                "model": batch.model,
+                "provider_host": batch.provider_host,
+                "latency_seconds": batch.latency_seconds,
+                "usage": batch.usage,
             }
         print_json(payload)
         return

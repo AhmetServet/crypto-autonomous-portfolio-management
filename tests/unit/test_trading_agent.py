@@ -74,6 +74,12 @@ class TradingRepository:
     def get_candle(self, symbol, interval, open_time):
         return self.candle
 
+    def get_candles(self, symbol, interval, start_time, end_time):
+        return [self.candle]
+
+    def get_indicator_set(self, symbol, interval, open_time):
+        return None
+
     def get_latest_prediction_journal_entries(self, symbol, interval, reference_time, stale_after):
         return self.predictions
 
@@ -81,6 +87,9 @@ class TradingRepository:
         saved = replace(entry, id=1)
         self.saved.append(saved)
         return saved
+
+    def update_agent_decision_execution(self, journal_id, **values):
+        return replace(self.saved[-1], **values)
 
     def get_available_symbols(self, interval):
         return ("BTCUSDT",)
@@ -122,7 +131,7 @@ class TradingAgentTests(unittest.TestCase):
         self.assertEqual(entry.risk_violations[0]["rule"], "insufficient_usdt")
 
     def test_spot_demo_mode_is_rejected_until_adapter_exists(self) -> None:
-        with self.assertRaisesRegex(ValueError, "not implemented"):
+        with self.assertRaisesRegex(ValueError, "dry-run mode only"):
             TradingAgentService(repository=TradingRepository()).run_once(
                 symbol="BTCUSDT",
                 interval="1m",
@@ -156,6 +165,10 @@ class TradingAgentTests(unittest.TestCase):
                     prompt="prompt",
                     raw_response="response",
                     attempts=1,
+                    model="model",
+                    provider_host="provider.example",
+                    latency_seconds=0.1,
+                    usage={"total_tokens": 10},
                 )
 
         repository = TradingRepository()
@@ -166,6 +179,37 @@ class TradingAgentTests(unittest.TestCase):
         self.assertEqual(entries[0].symbol, "BTCUSDT")
         self.assertEqual(entries[0].metadata["policy"], "llm")
         self.assertEqual(entries[0].metadata["llm_raw_response"], "response")
+
+    def test_spot_demo_llm_path_submits_approved_order(self) -> None:
+        class Policy:
+            def decide_batch(self, requests):
+                return LLMDecisionBatch(
+                    decisions={"BTCUSDT": ProposedDecision(action=DecisionAction.BUY, requested_usdt_amount=10, confidence=0.8)},
+                    system_prompt="system",
+                    prompt="prompt",
+                    raw_response="response",
+                    attempts=1,
+                    model="model",
+                    provider_host="provider.example",
+                    latency_seconds=0.1,
+                    usage={},
+                )
+
+        class Exchange:
+            def get_portfolio(self, symbol):
+                return PortfolioSnapshot(available_usdt=100)
+
+            def submit_market_order(self, symbol, decision):
+                return {"orderId": 123, "clientOrderId": "abc", "status": "FILLED"}
+
+        entries = TradingAgentService(repository=TradingRepository(), exchange_adapter=Exchange()).run_llm_once(
+            interval="1m",
+            mode="spot-demo",
+            llm_policy=Policy(),
+        )
+
+        self.assertEqual(entries[0].execution_status, "filled")
+        self.assertEqual(entries[0].exchange_order_id, "123")
 
 
 if __name__ == "__main__":

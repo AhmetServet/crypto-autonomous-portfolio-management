@@ -31,6 +31,8 @@ class BinanceSettings:
     retry_backoff_seconds: float = 0.5
     max_klines_per_request: int = 1000
     trust_env: bool = False
+    api_key: str = ""
+    api_secret: str = ""
 
     def __post_init__(self) -> None:
         """Validate the settings payload."""
@@ -75,6 +77,8 @@ class BinanceSettings:
             "yes",
             "on",
         }
+        api_key = os.getenv("CAPM_BINANCE_API_KEY", "").strip()
+        api_secret = os.getenv("CAPM_BINANCE_API_SECRET", "").strip()
 
         return cls(
             mode=resolved_mode,
@@ -83,6 +87,8 @@ class BinanceSettings:
             retry_attempts=retry_attempts,
             retry_backoff_seconds=retry_backoff,
             trust_env=trust_env,
+            api_key=api_key,
+            api_secret=api_secret,
         )
 
 

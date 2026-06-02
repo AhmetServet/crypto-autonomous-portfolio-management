@@ -64,6 +64,8 @@ class DecisionRequest:
     interval: str
     reference_time: datetime
     latest_candle: OHLCV
+    recent_candles: tuple[OHLCV, ...]
+    indicators: dict[str, str | None]
     predictions: tuple[PredictionJournalEntry, ...]
     portfolio: PortfolioSnapshot
     risk_config: RiskConfig

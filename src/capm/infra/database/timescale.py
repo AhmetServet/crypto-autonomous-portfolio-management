@@ -1007,6 +1007,30 @@ class TimescaleMarketDataRepository:
             session.refresh(row)
             return row.to_domain()
 
+    def update_agent_decision_execution(
+        self,
+        journal_id: int,
+        *,
+        execution_status: str,
+        exchange_response: dict[str, Any],
+        exchange_order_id: str | None = None,
+        exchange_client_order_id: str | None = None,
+    ) -> AgentDecisionJournalEntry:
+        """Persist the exchange result for one journaled decision."""
+        self._ensure_static_table(self._agent_decision_journal_model)
+        with self._session_factory() as session:
+            row = session.get(self._agent_decision_journal_model, journal_id)
+            if row is None:
+                raise ValueError(f"Agent decision journal entry {journal_id} was not found.")
+            row.execution_status = execution_status
+            row.exchange_response = exchange_response
+            row.exchange_order_id = exchange_order_id
+            row.exchange_client_order_id = exchange_client_order_id
+            row.updated_at = datetime.now(UTC)
+            session.commit()
+            session.refresh(row)
+            return row.to_domain()
+
     def summarize_agent_decision_journal(
         self,
         symbol: str,

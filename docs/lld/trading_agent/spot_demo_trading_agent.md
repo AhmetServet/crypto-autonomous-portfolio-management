@@ -623,8 +623,8 @@ Implemented in the first dry-run foundation:
 - repository and service tests
 
 Deferred to the next implementation step:
-- Binance Spot Demo authenticated execution adapter
-- `capm agent run-once --mode spot-demo` execution
+- exchange symbol filters and precision-aware quantity rounding
+- order status reconciliation beyond the initial submit response
 
 Implemented in the LLM decision step:
 - discover symbols dynamically from DB coinpairs that contain candles for the requested interval
@@ -633,11 +633,23 @@ Implemented in the LLM decision step:
 - validate strict JSON actions for every requested symbol
 - retry malformed LLM responses up to the configured attempt count
 - journal the prompt, raw response, attempt count, and risk-gated result
+- include latest indicators, recent candles, prediction age, and portfolio state in the prompt
+- reject inconsistent action amounts, non-positive sizes, and confidence values outside `0..1`
+- journal provider host, model, latency, and token usage when returned by the provider
 
 Current practical scope:
 - the local database currently determines the coin universe
 - BTCUSDT can be the only available symbol during initial development
 - a curated fixed multi-coin list can be introduced later without changing the LLM batch boundary
+
+Implemented in the Spot Demo execution step:
+- authenticated Spot Demo account balance reads
+- HMAC SHA256 signing for Binance signed REST requests
+- market buy by quote amount and market sell by base quantity
+- hard refusal to submit through the live Binance REST host
+- update `agent_decision_journal` with exchange order IDs, status, and raw response
+- skip duplicate submission when a retried cycle already has an exchange result
+- add explicit `capm spot-demo account` and confirmed `capm spot-demo test-market-buy` smoke-test commands
 
 ## 20. Open Questions
 Open questions before implementation:

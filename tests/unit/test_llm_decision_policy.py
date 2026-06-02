@@ -38,6 +38,8 @@ def _request(symbol: str) -> DecisionRequest:
             taker_buy_base_asset_volume=Decimal("1"),
             taker_buy_quote_asset_volume=Decimal("100"),
         ),
+        recent_candles=(),
+        indicators={"rsi_14_close": "55"},
         predictions=(),
         portfolio=PortfolioSnapshot(available_usdt=1000.0),
         risk_config=RiskConfig(),
@@ -55,6 +57,7 @@ class LLMDecisionPolicyTests(unittest.TestCase):
             return httpx.Response(
                 200,
                 json={
+                    "usage": {"total_tokens": 12},
                     "choices": [
                         {
                             "message": {
@@ -98,6 +101,8 @@ class LLMDecisionPolicyTests(unittest.TestCase):
         self.assertEqual(result.decisions["BTCUSDT"].action, "hold")
         self.assertEqual(result.decisions["ETHUSDT"].requested_usdt_amount, 10.0)
         self.assertIn("Return only a JSON array", result.system_prompt)
+        self.assertEqual(result.provider_host, "provider.example")
+        self.assertEqual(result.usage["total_tokens"], 12)
 
     def test_policy_retries_malformed_json(self) -> None:
         responses = iter(
@@ -121,6 +126,30 @@ class LLMDecisionPolicyTests(unittest.TestCase):
         result = policy.decide_batch((_request("BTCUSDT"),))
 
         self.assertEqual(result.attempts, 2)
+
+    def test_policy_rejects_hold_with_trade_amount(self) -> None:
+        client = httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(
+                    200,
+                    json={
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": '[{"symbol":"BTCUSDT","action":"hold",'
+                                    '"requested_usdt_amount":10,"requested_quantity":null,'
+                                    '"confidence":0.4,"reason":"wait"}]'
+                                }
+                            }
+                        ]
+                    },
+                )
+            )
+        )
+        policy = LLMDecisionPolicy(LLMSettings(api_key="secret", model="model", retry_attempts=1), client=client)
+
+        with self.assertRaisesRegex(ValueError, "hold requires null amounts"):
+            policy.decide_batch((_request("BTCUSDT"),))
 
 
 if __name__ == "__main__":

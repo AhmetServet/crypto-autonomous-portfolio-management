@@ -447,6 +447,16 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
         self.assertEqual(summary.risk_status_counts["approved"], 1)
         self.assertEqual(summary.execution_status_counts["not_submitted"], 1)
 
+        updated = self.repository.update_agent_decision_execution(
+            int(saved.id),
+            execution_status="filled",
+            exchange_response={"orderId": 123, "status": "FILLED"},
+            exchange_order_id="123",
+            exchange_client_order_id="abc",
+        )
+        self.assertEqual(updated.execution_status, "filled")
+        self.assertEqual(updated.exchange_order_id, "123")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from capm.domains.market_data import OHLCV
+from capm.domains.market_data import OHLCV, interval_to_timedelta
 from capm.domains.trading import (
     AgentDecisionJournalEntry,
     DecisionRequest,
@@ -26,11 +26,13 @@ class TradingAgentService:
         repository,
         decision_policy=None,
         risk_control=None,
+        exchange_adapter=None,
     ) -> None:
         self._repository = repository
         self._decision_policy = decision_policy or ThresholdDecisionPolicy()
         self._risk_control = risk_control or RiskControlService()
         self.last_llm_batch = None
+        self._exchange_adapter = exchange_adapter
 
     def run_once(
         self,
@@ -44,7 +46,7 @@ class TradingAgentService:
         """Run one dry-run decision cycle against the latest stored candle."""
         normalized_mode = normalize_trading_mode(mode)
         if normalized_mode != "dry_run":
-            raise ValueError("Spot Demo execution adapter is not implemented yet; use dry-run mode.")
+            raise ValueError("Threshold policy supports dry-run mode only.")
         latest_time = self._repository.get_latest_candle_time(symbol, interval)
         if latest_time is None:
             raise ValueError(f"No stored candle exists for {symbol} {interval}.")
@@ -65,6 +67,8 @@ class TradingAgentService:
             interval=interval,
             reference_time=latest_time,
             latest_candle=candle,
+            recent_candles=self._recent_candles(symbol, interval, latest_time),
+            indicators=self._indicator_snapshot(symbol, interval, latest_time),
             predictions=predictions,
             portfolio=portfolio or PortfolioSnapshot(available_usdt=1000.0),
             risk_config=resolved_config,
@@ -86,8 +90,8 @@ class TradingAgentService:
     ) -> tuple[AgentDecisionJournalEntry, ...]:
         """Run one batched LLM call across all DB-available symbols."""
         normalized_mode = normalize_trading_mode(mode)
-        if normalized_mode != "dry_run":
-            raise ValueError("Spot Demo execution adapter is not implemented yet; use dry-run mode.")
+        if normalized_mode == "spot_demo" and self._exchange_adapter is None:
+            raise ValueError("Spot Demo execution requires an exchange adapter.")
         symbols = self._repository.get_available_symbols(interval)
         if not symbols:
             raise ValueError(f"No stored candles exist for interval {interval}.")
@@ -98,7 +102,11 @@ class TradingAgentService:
                 symbol=symbol,
                 interval=interval,
                 mode=normalized_mode,
-                portfolio=resolved_portfolio,
+                portfolio=(
+                    self._exchange_adapter.get_portfolio(symbol)
+                    if normalized_mode == "spot_demo"
+                    else resolved_portfolio
+                ),
                 risk_config=resolved_config,
                 policy_name="llm",
             )
@@ -110,8 +118,7 @@ class TradingAgentService:
         for request in requests:
             decision = batch.decisions[request.symbol]
             risk_result = self._risk_control.evaluate(request, decision)
-            entries.append(
-                self._repository.save_agent_decision_journal_entry(
+            entry = self._repository.save_agent_decision_journal_entry(
                     self._journal_entry(
                         request,
                         decision,
@@ -122,10 +129,27 @@ class TradingAgentService:
                             "llm_prompt": batch.prompt,
                             "llm_raw_response": batch.raw_response,
                             "llm_attempts": batch.attempts,
+                            "llm_model": batch.model,
+                            "llm_provider_host": batch.provider_host,
+                            "llm_latency_seconds": batch.latency_seconds,
+                            "llm_usage": batch.usage,
                         },
                     )
                 )
-            )
+            if (
+                normalized_mode == "spot_demo"
+                and risk_result.status == "approved"
+                and entry.execution_status == "not_submitted"
+            ):
+                response = self._exchange_adapter.submit_market_order(request.symbol, decision)
+                entry = self._repository.update_agent_decision_execution(
+                    int(entry.id),
+                    execution_status=str(response.get("status", "submitted")).lower(),
+                    exchange_response=response,
+                    exchange_order_id=str(response["orderId"]) if "orderId" in response else None,
+                    exchange_client_order_id=response.get("clientOrderId"),
+                )
+            entries.append(entry)
         return tuple(entries)
 
     def _build_request(
@@ -157,6 +181,8 @@ class TradingAgentService:
             interval=interval,
             reference_time=latest_time,
             latest_candle=candle,
+            recent_candles=self._recent_candles(symbol, interval, latest_time),
+            indicators=self._indicator_snapshot(symbol, interval, latest_time),
             predictions=predictions,
             portfolio=portfolio,
             risk_config=risk_config,
@@ -186,7 +212,11 @@ class TradingAgentService:
                     for row in request.predictions
                 ]
             },
-            market_snapshot=self._market_snapshot(request.latest_candle),
+            market_snapshot={
+                "latest_candle": self._market_snapshot(request.latest_candle),
+                "recent_candles": [self._market_snapshot(candle) for candle in request.recent_candles],
+                "indicators": request.indicators,
+            },
             portfolio_snapshot=request.portfolio.to_dict(),
             risk_status=risk_result.status,
             risk_violations=tuple(item.to_dict() for item in risk_result.violations),
@@ -203,4 +233,24 @@ class TradingAgentService:
             "low": str(candle.low),
             "close": str(candle.close),
             "volume": str(candle.volume),
+        }
+
+    def _recent_candles(self, symbol: str, interval: str, latest_time) -> tuple[OHLCV, ...]:
+        interval_delta = interval_to_timedelta(interval)
+        return tuple(
+            self._repository.get_candles(
+                symbol,
+                interval,
+                latest_time - (interval_delta * 4),
+                latest_time + interval_delta,
+            )
+        )
+
+    def _indicator_snapshot(self, symbol: str, interval: str, latest_time) -> dict[str, str | None]:
+        indicator_set = self._repository.get_indicator_set(symbol, interval, latest_time)
+        if indicator_set is None:
+            return {}
+        return {
+            name: None if value is None else str(value)
+            for name, value in indicator_set.values.items()
         }

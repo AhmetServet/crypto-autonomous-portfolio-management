@@ -224,6 +224,49 @@ CAPM_LLM_MODEL=<provider model identifier>
 
 OpenRouter is the default base URL. Change the URL, key, and model to use another compatible chat-completions provider.
 
+The LLM prompt includes current price, the latest five stored candles, persisted indicators, prediction direction and age, simulated portfolio balances, and hard risk limits. The response parser rejects invalid action sizing and confidence values before risk evaluation.
+
+### Binance Spot Demo execution
+Configure Spot Demo API credentials:
+
+```text
+CAPM_BINANCE_MODE=demo
+CAPM_BINANCE_SPOT_REST_BASE_URL=https://demo-api.binance.com
+CAPM_BINANCE_API_KEY=<Spot Demo API key>
+CAPM_BINANCE_API_SECRET=<Spot Demo API secret>
+```
+
+Run one authenticated Spot Demo cycle:
+
+```bash
+uv run capm agent run-once \
+  --interval 1m \
+  --mode spot-demo \
+  --policy llm \
+  --max-trade-usdt 10 \
+  --max-position-usdt 25 \
+  --show-prompt
+```
+
+Spot Demo execution reads balances from Binance, applies the same hard risk gate, and submits only approved market orders. The adapter refuses the live Binance REST host.
+
+Read Spot Demo balances without placing an order:
+
+```bash
+uv run capm spot-demo account --symbol BTCUSDT
+```
+
+Submit one explicit Spot Demo market-buy smoke test:
+
+```bash
+uv run capm spot-demo test-market-buy \
+  --symbol BTCUSDT \
+  --usdt-amount 10 \
+  --confirm
+```
+
+The smoke-test command is separate from the LLM loop and refuses to run without `--confirm`.
+
 Summarize recorded decisions:
 
 ```bash
