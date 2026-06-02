@@ -652,6 +652,22 @@ Implemented in the Spot Demo execution step:
 - persist the initial submit response before querying the latest order status
 - reconcile the submitted order with signed `GET /api/v3/order`
 
+Implemented in the closed-candle live-cycle step:
+- add `capm agent run-live-once`
+- acquire one PostgreSQL advisory lock per interval and closed-candle boundary
+- fill missing closed candles through REST without ingesting the open candle
+- recompute and persist the recent default indicator window
+- settle prediction-journal rows whose target candles are now available
+- resolve repeated `SYMBOL=PATH` production artifact mappings
+- generate and journal one prediction per configured model artifact
+- run each artifact prediction in an isolated worker process to avoid native ML runtime conflicts
+- run one LLM decision batch after market state and predictions are current
+- keep dry-run as the default and require explicit `--mode spot-demo` for Demo execution
+- stop before prediction and trading when the closed-candle gap exceeds the configurable inline-recovery threshold
+- stop when a production artifact file is older than the configurable freshness threshold
+- default the inline-recovery threshold to `180` minutes and model freshness threshold to `3` days
+- require explicit `--allow-large-gap-recovery` and `--allow-stale-models` overrides for non-production recovery checks
+
 ## 20. Open Questions
 Open questions before implementation:
 - Should `hold` decisions be journaled for every symbol every minute in scheduled mode, or sampled to reduce storage?

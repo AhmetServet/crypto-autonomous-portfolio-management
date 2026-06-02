@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Iterable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import islice
@@ -1080,3 +1081,22 @@ class TimescaleMarketDataRepository:
         for value in values:
             counts[value] = counts.get(value, 0) + 1
         return counts
+
+    @contextmanager
+    def cycle_lock(self, lock_key: str):
+        """Acquire one PostgreSQL advisory lock for the duration of an agent cycle."""
+        with self._session_factory() as session:
+            acquired = bool(
+                session.scalar(
+                    text("SELECT pg_try_advisory_lock(hashtext(:lock_key))"),
+                    {"lock_key": lock_key},
+                )
+            )
+            try:
+                yield acquired
+            finally:
+                if acquired:
+                    session.execute(
+                        text("SELECT pg_advisory_unlock(hashtext(:lock_key))"),
+                        {"lock_key": lock_key},
+                    )

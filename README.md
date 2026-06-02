@@ -267,6 +267,20 @@ uv run capm spot-demo test-market-buy \
 
 The smoke-test command is separate from the LLM loop and refuses to run without `--confirm`.
 
+Run one closed-candle live pipeline cycle in dry-run mode:
+
+```bash
+uv run capm agent run-live-once \
+  --interval 1m \
+  --mode dry-run \
+  --model-artifact BTCUSDT=experiments/results/<xgboost_run_id>/model.pkl \
+  --model-artifact BTCUSDT=experiments/results/<lstm_run_id>/model.pkl
+```
+
+`run-live-once` acquires a PostgreSQL advisory lock for the candle boundary, fills missing closed candles through REST, recalculates the recent persisted indicator window, settles matured predictions, journals one new prediction per configured model artifact, and runs one batched LLM decision call. Each artifact prediction runs in an isolated worker process so native ML runtimes such as XGBoost and PyTorch do not load conflicting OpenMP libraries into the same process. Repeat `--model-artifact SYMBOL=PATH` for each production model. The default is dry-run; pass `--mode spot-demo` explicitly to allow approved Demo orders.
+
+The live cycle stops before prediction and trading when the candle gap exceeds `180` minutes or a model artifact file is older than `3` days. Retrain stale models before production use. For an explicit recovery check, use `--allow-large-gap-recovery` to backfill a longer candle gap and `--allow-stale-models` only when you intentionally want to validate the pipeline with an outdated artifact. Adjust the thresholds with `--max-inline-gap-minutes` and `--max-model-age-days`.
+
 Summarize recorded decisions:
 
 ```bash

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 from capm.core.config import BinanceSettings, DatabaseSettings, LLMSettings
 from capm.domains.market_data import HistoricalOHLCRequest, interval_to_timedelta
@@ -16,6 +17,7 @@ from capm.services.prediction_journal import PredictionJournalService
 from capm.services.prediction_runtime import PredictionRuntimeService
 from capm.services.trading_agent import TradingAgentService
 from capm.services.llm_decision_policy import LLMDecisionPolicy
+from capm.services.live_cycle import LiveTradingCycleService
 from capm.domains.trading import DecisionAction, PortfolioSnapshot, ProposedDecision, RiskConfig
 
 
@@ -83,6 +85,17 @@ def _agent_decision_payload(entry) -> dict[str, object]:
         "execution_status": entry.execution_status,
         "journal_id": entry.id,
     }
+
+
+def _parse_model_artifacts(values: list[str]) -> dict[str, tuple[Path, ...]]:
+    """Parse repeated SYMBOL=PATH model-artifact CLI values."""
+    parsed: dict[str, list[Path]] = {}
+    for value in values:
+        symbol, separator, artifact_path = value.partition("=")
+        if not separator or not symbol.strip() or not artifact_path.strip():
+            raise ValueError("Model artifacts must use SYMBOL=PATH format, e.g. BTCUSDT=experiments/results/run/model.pkl.")
+        parsed.setdefault(symbol.strip().upper(), []).append(Path(artifact_path.strip()))
+    return {symbol: tuple(paths) for symbol, paths in parsed.items()}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -222,6 +235,46 @@ def build_parser() -> argparse.ArgumentParser:
     run_once_parser.add_argument("--max-position-usdt", type=float, default=100.0)
     run_once_parser.add_argument("--min-predicted-return", type=float, default=0.0005)
     run_once_parser.add_argument("--prediction-staleness-minutes", type=int, default=5)
+    live_once_parser = agent_subparsers.add_parser(
+        "run-live-once",
+        help="Refresh closed candles, journal predictions, and run one LLM trading cycle.",
+    )
+    live_once_parser.add_argument("--interval", default="1m", help="Candle interval, e.g. 1m.")
+    live_once_parser.add_argument("--mode", default="dry-run", choices=["dry-run", "spot-demo"])
+    live_once_parser.add_argument(
+        "--model-artifact",
+        action="append",
+        required=True,
+        help="Production model mapping in SYMBOL=PATH form. Repeat to run multiple models.",
+    )
+    live_once_parser.add_argument(
+        "--market-data-mode",
+        default="demo",
+        choices=["demo", "live"],
+        help="Binance public REST environment used to backfill closed candles.",
+    )
+    live_once_parser.add_argument(
+        "--max-inline-gap-minutes",
+        type=int,
+        default=180,
+        help="Refuse inline candle recovery beyond this duration.",
+    )
+    live_once_parser.add_argument(
+        "--max-model-age-days",
+        type=int,
+        default=3,
+        help="Refuse production model artifacts older than this many days.",
+    )
+    live_once_parser.add_argument(
+        "--allow-large-gap-recovery",
+        action="store_true",
+        help="Explicitly allow a long REST candle backfill before the cycle continues.",
+    )
+    live_once_parser.add_argument(
+        "--allow-stale-models",
+        action="store_true",
+        help="Explicitly allow stale artifacts for a non-production recovery check.",
+    )
     agent_journal_parser = agent_subparsers.add_parser("journal", help="Inspect agent decision journal rows.")
     agent_journal_subparsers = agent_journal_parser.add_subparsers(dest="agent_journal_command", required=True)
     agent_summary_parser = agent_journal_subparsers.add_parser("summary", help="Summarize agent decision journal rows.")
@@ -505,6 +558,53 @@ def main() -> None:
                 "usage": batch.usage,
             }
         print_json(payload)
+        return
+
+    if args.command == "agent" and args.agent_command == "run-live-once":
+        repository = build_repository()
+        market_data_adapter = BinanceSpotMarketDataAdapter(
+            BinanceSettings.from_env(mode=args.market_data_mode)
+        )
+        exchange_adapter = (
+            BinanceSpotDemoTradingAdapter(BinanceSettings.from_env(mode="demo"))
+            if args.mode == "spot-demo"
+            else None
+        )
+        llm_policy = LLMDecisionPolicy(LLMSettings.from_env())
+        try:
+            trading_agent = TradingAgentService(
+                repository=repository,
+                exchange_adapter=exchange_adapter,
+            )
+            result = LiveTradingCycleService(
+                repository=repository,
+                market_data_adapter=market_data_adapter,
+                trading_agent=trading_agent,
+                llm_policy=llm_policy,
+                artifacts_by_symbol=_parse_model_artifacts(args.model_artifact),
+                max_inline_gap_minutes=args.max_inline_gap_minutes,
+                max_model_age_days=args.max_model_age_days,
+                allow_large_gap_recovery=args.allow_large_gap_recovery,
+                allow_stale_models=args.allow_stale_models,
+            ).run_once(interval=args.interval, mode=args.mode)
+            print_json(
+                {
+                    "status": "skipped" if result.skipped_reason else "ok",
+                    "cycle_time": result.cycle_time,
+                    "symbols": result.symbols,
+                    "ingested_candles": result.ingested_candles,
+                    "persisted_indicators": result.persisted_indicators,
+                    "predictions_journaled": result.predictions_journaled,
+                    "predictions_settled": result.predictions_settled,
+                    "skipped_reason": result.skipped_reason,
+                    "decisions": [_agent_decision_payload(entry) for entry in result.decisions],
+                }
+            )
+        finally:
+            llm_policy.close()
+            market_data_adapter.close()
+            if exchange_adapter is not None:
+                exchange_adapter.close()
         return
 
     if args.command == "agent" and args.agent_command == "journal" and args.agent_journal_command == "summary":

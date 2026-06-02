@@ -172,6 +172,7 @@ dependencies = [
     { name = "psycopg2" },
     { name = "python-dotenv" },
     { name = "sqlalchemy" },
+    { name = "xgboost" },
 ]
 
 [package.optional-dependencies]
@@ -216,6 +217,7 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.0" },
     { name = "statsmodels", marker = "extra == 'ml'" },
     { name = "torch", marker = "extra == 'deep-learning'" },
+    { name = "xgboost", specifier = ">=3.2.0" },
     { name = "xgboost", marker = "extra == 'ml'" },
 ]
 provides-extras = ["ml", "notebooks", "backtest", "deep-learning"]
