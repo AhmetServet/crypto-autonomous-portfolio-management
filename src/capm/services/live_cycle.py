@@ -11,6 +11,7 @@ from typing import Callable
 
 from capm.domains.features import IndicatorSpec
 from capm.domains.market_data import HistoricalOHLCRequest, interval_to_timedelta
+from capm.domains.trading import RiskConfig
 from capm.services.features import IndicatorPipelineService
 from capm.services.ingestion import HistoricalMarketDataIngestionService
 from capm.services.prediction_journal import PredictionJournalService
@@ -65,6 +66,7 @@ class LiveTradingCycleService:
     allow_large_gap_recovery: bool = False
     allow_stale_models: bool = False
     prediction_runner: Callable[[Path, str, str, datetime], None] | None = None
+    risk_config: RiskConfig | None = None
 
     def run_once(self, *, interval: str = "1m", mode: str = "dry_run") -> LiveCycleResult:
         """Run one idempotent cycle using only fully closed candles."""
@@ -182,6 +184,7 @@ class LiveTradingCycleService:
             interval=interval,
             mode=mode,
             llm_policy=self.llm_policy,
+            risk_config=self.risk_config,
         )
         return LiveCycleResult(
             cycle_time=cycle_time,

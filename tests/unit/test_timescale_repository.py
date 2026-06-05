@@ -457,6 +457,41 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
         self.assertEqual(updated.execution_status, "filled")
         self.assertEqual(updated.exchange_order_id, "123")
 
+    def test_repository_builds_operational_risk_snapshot_from_filled_orders(self) -> None:
+        at = datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
+        for index, (action, quantity, quote) in enumerate((("buy", "1", "100"), ("sell", "0.5", "45"))):
+            saved = self.repository.save_agent_decision_journal_entry(
+                AgentDecisionJournalEntry(
+                    cycle_id=f"cycle-{index}",
+                    mode="spot-demo",
+                    symbol="BTCUSDT",
+                    interval="1m",
+                    reference_time=at,
+                    created_at=at,
+                    action=action,
+                    risk_status="approved",
+                    execution_status="not_submitted",
+                )
+            )
+            self.repository.update_agent_decision_execution(
+                int(saved.id),
+                execution_status="filled",
+                exchange_order_id=str(index + 1),
+                exchange_response={
+                    "reconciliation": {
+                        "side": action.upper(),
+                        "executedQty": quantity,
+                        "cummulativeQuoteQty": quote,
+                    }
+                },
+            )
+
+        snapshot = self.repository.get_operational_risk_snapshot("BTCUSDT", at)
+
+        self.assertEqual(snapshot.orders_today, 2)
+        self.assertEqual(snapshot.realized_pnl_today_usdt, -5)
+        self.assertEqual(snapshot.last_order_at, at)
+
 
 if __name__ == "__main__":
     unittest.main()

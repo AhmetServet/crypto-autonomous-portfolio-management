@@ -9,7 +9,7 @@ import unittest
 
 from capm.domains.market_data import OHLCV
 from capm.domains.prediction import PredictionJournalEntry
-from capm.domains.trading import PortfolioSnapshot, RiskConfig
+from capm.domains.trading import OperationalRiskSnapshot, PortfolioSnapshot, RiskConfig
 from capm.domains.trading import DecisionAction, ProposedDecision
 from capm.services.llm_decision_policy import LLMDecisionBatch
 from capm.services.trading_agent import TradingAgentService
@@ -94,6 +94,9 @@ class TradingRepository:
 
     def get_available_symbols(self, interval):
         return ("BTCUSDT",)
+
+    def get_operational_risk_snapshot(self, symbol, at):
+        return OperationalRiskSnapshot(orders_today=0, realized_pnl_today_usdt=0.0, observed_at=at)
 
 
 class TradingAgentTests(unittest.TestCase):
@@ -215,6 +218,38 @@ class TradingAgentTests(unittest.TestCase):
         self.assertEqual(entries[0].execution_status, "filled")
         self.assertEqual(entries[0].exchange_order_id, "123")
         self.assertEqual(entries[0].exchange_response["reconciliation"]["status"], "FILLED")
+
+    def test_spot_demo_operational_emergency_stop_rejects_order(self) -> None:
+        class Policy:
+            def decide_batch(self, requests):
+                return LLMDecisionBatch(
+                    decisions={"BTCUSDT": ProposedDecision(action=DecisionAction.BUY, requested_usdt_amount=10)},
+                    system_prompt="system",
+                    prompt="prompt",
+                    raw_response="response",
+                    attempts=1,
+                    model="model",
+                    provider_host="provider.example",
+                    latency_seconds=0.1,
+                    usage={},
+                )
+
+        class Exchange:
+            def get_portfolio(self, symbol):
+                return PortfolioSnapshot(available_usdt=100)
+
+            def submit_market_order(self, symbol, decision):
+                raise AssertionError("emergency stop must prevent submission")
+
+        entries = TradingAgentService(repository=TradingRepository(), exchange_adapter=Exchange()).run_llm_once(
+            interval="1m",
+            mode="spot-demo",
+            llm_policy=Policy(),
+            risk_config=RiskConfig(emergency_stop=True),
+        )
+
+        self.assertEqual(entries[0].risk_status, "rejected")
+        self.assertEqual(entries[0].risk_violations[0]["rule"], "emergency_stop")
 
 
 if __name__ == "__main__":

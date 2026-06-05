@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from capm.domains.market_data import OHLCV, interval_to_timedelta
 from capm.domains.trading import (
@@ -10,6 +10,7 @@ from capm.domains.trading import (
     DecisionRequest,
     PortfolioSnapshot,
     RiskConfig,
+    RiskResult,
     normalize_trading_mode,
 )
 from capm.services.decision_policy import ThresholdDecisionPolicy
@@ -118,6 +119,21 @@ class TradingAgentService:
         for request in requests:
             decision = batch.decisions[request.symbol]
             risk_result = self._risk_control.evaluate(request, decision)
+            if normalized_mode == "spot_demo" and risk_result.status == "approved":
+                operational_snapshot = self._repository.get_operational_risk_snapshot(
+                    request.symbol,
+                    datetime.now(UTC),
+                )
+                operational_result = self._risk_control.evaluate_operational(
+                    request,
+                    decision,
+                    operational_snapshot,
+                )
+                if operational_result.status == "rejected":
+                    risk_result = RiskResult(
+                        status="rejected",
+                        violations=(*risk_result.violations, *operational_result.violations),
+                    )
             entry = self._repository.save_agent_decision_journal_entry(
                     self._journal_entry(
                         request,

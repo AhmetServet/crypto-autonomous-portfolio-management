@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -96,6 +97,35 @@ def _parse_model_artifacts(values: list[str]) -> dict[str, tuple[Path, ...]]:
             raise ValueError("Model artifacts must use SYMBOL=PATH format, e.g. BTCUSDT=experiments/results/run/model.pkl.")
         parsed.setdefault(symbol.strip().upper(), []).append(Path(artifact_path.strip()))
     return {symbol: tuple(paths) for symbol, paths in parsed.items()}
+
+
+def _environment_flag(name: str) -> bool:
+    """Read one opt-in boolean environment variable."""
+    return os.getenv(name, "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _risk_config_from_args(args) -> RiskConfig:
+    """Build hard and operational trading limits from CLI arguments."""
+    return RiskConfig(
+        max_trade_usdt=args.max_trade_usdt,
+        max_position_usdt=args.max_position_usdt,
+        min_predicted_return=getattr(args, "min_predicted_return", 0.0005),
+        prediction_staleness_minutes=getattr(args, "prediction_staleness_minutes", 5),
+        emergency_stop=args.emergency_stop or _environment_flag("CAPM_TRADING_EMERGENCY_STOP"),
+        max_daily_realized_loss_usdt=args.max_daily_realized_loss_usdt,
+        max_orders_per_day=args.max_orders_per_day,
+        order_cooldown_minutes=args.order_cooldown_minutes,
+        max_total_exposure_usdt=args.max_total_exposure_usdt,
+    )
+
+
+def _add_operational_risk_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add shared unattended-execution risk controls."""
+    parser.add_argument("--emergency-stop", action="store_true")
+    parser.add_argument("--max-daily-realized-loss-usdt", type=float, default=50.0)
+    parser.add_argument("--max-orders-per-day", type=int, default=20)
+    parser.add_argument("--order-cooldown-minutes", type=int, default=5)
+    parser.add_argument("--max-total-exposure-usdt", type=float, default=100.0)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -235,6 +265,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_once_parser.add_argument("--max-position-usdt", type=float, default=100.0)
     run_once_parser.add_argument("--min-predicted-return", type=float, default=0.0005)
     run_once_parser.add_argument("--prediction-staleness-minutes", type=int, default=5)
+    _add_operational_risk_arguments(run_once_parser)
     live_once_parser = agent_subparsers.add_parser(
         "run-live-once",
         help="Refresh closed candles, journal predictions, and run one LLM trading cycle.",
@@ -275,6 +306,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Explicitly allow stale artifacts for a non-production recovery check.",
     )
+    live_once_parser.add_argument("--max-trade-usdt", type=float, default=25.0)
+    live_once_parser.add_argument("--max-position-usdt", type=float, default=100.0)
+    _add_operational_risk_arguments(live_once_parser)
     agent_journal_parser = agent_subparsers.add_parser("journal", help="Inspect agent decision journal rows.")
     agent_journal_subparsers = agent_journal_parser.add_subparsers(dest="agent_journal_command", required=True)
     agent_summary_parser = agent_journal_subparsers.add_parser("summary", help="Summarize agent decision journal rows.")
@@ -502,12 +536,7 @@ def main() -> None:
             available_usdt=args.dry_run_usdt_balance,
             base_asset_free=args.dry_run_base_asset_balance,
         )
-        risk_config = RiskConfig(
-            max_trade_usdt=args.max_trade_usdt,
-            max_position_usdt=args.max_position_usdt,
-            min_predicted_return=args.min_predicted_return,
-            prediction_staleness_minutes=args.prediction_staleness_minutes,
-        )
+        risk_config = _risk_config_from_args(args)
         exchange_adapter = None
         if args.mode == "spot-demo":
             exchange_adapter = BinanceSpotDemoTradingAdapter(BinanceSettings.from_env(mode="demo"))
@@ -586,6 +615,7 @@ def main() -> None:
                 max_model_age_days=args.max_model_age_days,
                 allow_large_gap_recovery=args.allow_large_gap_recovery,
                 allow_stale_models=args.allow_stale_models,
+                risk_config=_risk_config_from_args(args),
             ).run_once(interval=args.interval, mode=args.mode)
             print_json(
                 {

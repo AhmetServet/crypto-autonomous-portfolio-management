@@ -668,6 +668,20 @@ Implemented in the closed-candle live-cycle step:
 - default the inline-recovery threshold to `180` minutes and model freshness threshold to `3` days
 - require explicit `--allow-large-gap-recovery` and `--allow-stale-models` overrides for non-production recovery checks
 
+Implemented in the operational-risk step:
+- derive persistent execution state from filled Spot Demo rows in `agent_decision_journal`
+- calculate symbol-scoped FIFO daily realized PnL from persisted exchange quote quantities
+- reject submission when `CAPM_TRADING_EMERGENCY_STOP=true` or `--emergency-stop` is passed
+- reject submission after the daily realized-loss limit
+- reject submission after the daily order-count limit
+- enforce a cooldown between submitted orders
+- reject orders that exceed the priced symbol-exposure limit
+- journal operational rejections with machine-readable risk violations
+
+Current valuation limitations:
+- exposure, daily order count, cooldown, and realized PnL are symbol-scoped until account-wide multi-coin controls are added
+- FIFO realized PnL does not convert commissions charged in third-party assets into USDT
+
 ## 20. Open Questions
 Open questions before implementation:
 - Should `hold` decisions be journaled for every symbol every minute in scheduled mode, or sampled to reduce storage?

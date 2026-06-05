@@ -52,6 +52,31 @@ class RiskConfig:
     max_position_usdt: float = 100.0
     min_predicted_return: float = 0.0005
     prediction_staleness_minutes: int = 5
+    emergency_stop: bool = False
+    max_daily_realized_loss_usdt: float = 50.0
+    max_orders_per_day: int = 20
+    order_cooldown_minutes: int = 5
+    max_total_exposure_usdt: float = 100.0
+
+    def __post_init__(self) -> None:
+        if self.max_trade_usdt <= 0 or self.max_position_usdt <= 0:
+            raise ValueError("trade and position limits must be positive.")
+        if self.max_daily_realized_loss_usdt <= 0 or self.max_total_exposure_usdt <= 0:
+            raise ValueError("operational USDT limits must be positive.")
+        if self.max_orders_per_day < 1:
+            raise ValueError("max_orders_per_day must be positive.")
+        if self.order_cooldown_minutes < 0:
+            raise ValueError("order_cooldown_minutes cannot be negative.")
+
+
+@dataclass(frozen=True, slots=True)
+class OperationalRiskSnapshot:
+    """Persisted execution state required by unattended Spot Demo controls."""
+
+    orders_today: int
+    realized_pnl_today_usdt: float
+    observed_at: datetime
+    last_order_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

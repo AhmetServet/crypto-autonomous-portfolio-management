@@ -281,6 +281,10 @@ uv run capm agent run-live-once \
 
 The live cycle stops before prediction and trading when the candle gap exceeds `180` minutes or a model artifact file is older than `3` days. Retrain stale models before production use. For an explicit recovery check, use `--allow-large-gap-recovery` to backfill a longer candle gap and `--allow-stale-models` only when you intentionally want to validate the pipeline with an outdated artifact. Adjust the thresholds with `--max-inline-gap-minutes` and `--max-model-age-days`.
 
+Spot Demo submissions also pass persistent operational controls derived from `agent_decision_journal`: emergency stop, FIFO daily realized-loss limit, maximum orders per day, order cooldown, and priced exposure limit. Defaults are `50` USDT realized loss, `20` orders per day, `5` cooldown minutes, and `100` USDT exposure. Override them with the corresponding `--max-*` flags. Set `CAPM_TRADING_EMERGENCY_STOP=true` to block submissions without changing scheduler arguments.
+
+The first operational snapshot is symbol-scoped: exposure, daily order count, cooldown, and FIFO realized PnL are calculated for the current symbol. FIFO realized PnL uses persisted exchange quote quantities and does not convert fees charged in third-party assets into USDT. Extend these controls to account scope before enabling a multi-coin portfolio.
+
 Summarize recorded decisions:
 
 ```bash

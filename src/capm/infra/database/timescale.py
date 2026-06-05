@@ -33,7 +33,7 @@ from capm.domains.prediction import (
     prediction_direction,
     rmse,
 )
-from capm.domains.trading import AgentDecisionJournalEntry, AgentDecisionJournalSummary
+from capm.domains.trading import AgentDecisionJournalEntry, AgentDecisionJournalSummary, OperationalRiskSnapshot
 from capm.infra.database.models import (
     agent_decision_journal_to_record,
     build_feature_table_name,
@@ -1066,6 +1066,76 @@ class TimescaleMarketDataRepository:
             ),
             mode_counts=self._value_counts((row.mode for row in rows), ("dry_run", "spot_demo")),
         )
+
+    def get_operational_risk_snapshot(self, symbol: str, at: datetime) -> OperationalRiskSnapshot:
+        """Build daily execution controls from persisted filled Spot Demo orders."""
+        self._ensure_static_table(self._agent_decision_journal_model)
+        normalized_symbol = normalize_symbol(symbol)
+        normalized_at = ensure_utc(at)
+        day_start = normalized_at.replace(hour=0, minute=0, second=0, microsecond=0)
+        with self._session_factory() as session:
+            stmt = (
+                select(self._agent_decision_journal_model)
+                .where(
+                    self._agent_decision_journal_model.mode == "spot_demo",
+                    self._agent_decision_journal_model.symbol == normalized_symbol,
+                    self._agent_decision_journal_model.exchange_order_id.is_not(None),
+                    self._agent_decision_journal_model.created_at <= normalized_at,
+                )
+                .order_by(self._agent_decision_journal_model.created_at.asc())
+            )
+            rows = session.scalars(stmt).all()
+
+        inventory_quantity = 0.0
+        inventory_cost = 0.0
+        realized_pnl_today = 0.0
+        orders_today = 0
+        last_order_at = None
+        for row in rows:
+            created_at = ensure_utc(row.created_at)
+            order = self._resolved_exchange_order(row.exchange_response)
+            if not order:
+                continue
+            executed_quantity = float(order.get("executedQty", 0) or 0)
+            quote_quantity = float(order.get("cummulativeQuoteQty", 0) or 0)
+            if executed_quantity <= 0 or quote_quantity <= 0:
+                continue
+            if created_at >= day_start:
+                orders_today += 1
+            last_order_at = created_at
+            if str(order.get("side", row.action)).lower() == "buy":
+                inventory_quantity += executed_quantity
+                inventory_cost += quote_quantity
+                continue
+            if inventory_quantity <= 0:
+                continue
+            sold_quantity = min(executed_quantity, inventory_quantity)
+            allocated_cost = inventory_cost * (sold_quantity / inventory_quantity)
+            realized_pnl = (quote_quantity * (sold_quantity / executed_quantity)) - allocated_cost
+            if created_at >= day_start:
+                realized_pnl_today += realized_pnl
+            inventory_quantity -= sold_quantity
+            inventory_cost -= allocated_cost
+
+        return OperationalRiskSnapshot(
+            orders_today=orders_today,
+            realized_pnl_today_usdt=realized_pnl_today,
+            observed_at=normalized_at,
+            last_order_at=last_order_at,
+        )
+
+    @staticmethod
+    def _resolved_exchange_order(exchange_response: dict[str, Any]) -> dict[str, Any]:
+        """Return the newest order payload persisted by execution reconciliation."""
+        if not exchange_response:
+            return {}
+        reconciliation = exchange_response.get("reconciliation")
+        if isinstance(reconciliation, dict):
+            return reconciliation
+        submission = exchange_response.get("submission")
+        if isinstance(submission, dict):
+            return submission
+        return exchange_response
 
     @staticmethod
     def _direction_counts(values: Iterable[str | None]) -> dict[str, int]:
