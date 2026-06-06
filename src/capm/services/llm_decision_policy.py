@@ -68,7 +68,12 @@ class LLMDecisionPolicy:
                 headers={"Authorization": f"Bearer {self.settings.api_key}", "Content-Type": "application/json"},
                 json={"model": self.settings.model, "messages": messages, "temperature": 0},
             )
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                raise ValueError(
+                    f"LLM provider returned HTTP {response.status_code}: {response.text[:1000]}"
+                ) from exc
             payload = response.json()
             last_response = str(payload["choices"][0]["message"]["content"])
             try:

@@ -678,6 +678,15 @@ Implemented in the operational-risk step:
 - reject orders that exceed the priced symbol-exposure limit
 - journal operational rejections with machine-readable risk violations
 
+Implemented in the continuous-scheduler step:
+- add `capm agent run-loop`
+- reuse all closed-candle live-cycle, artifact, recovery, and operational-risk arguments
+- sleep until shortly after each candle boundary before running a cycle
+- support `--max-cycles` for bounded smoke tests
+- support bounded failure handling with `--stop-after-error-count`
+- log each cycle as a structured JSON payload
+- close LLM, market-data, and Spot Demo clients on exit
+
 Current valuation limitations:
 - exposure, daily order count, cooldown, and realized PnL are symbol-scoped until account-wide multi-coin controls are added
 - FIFO realized PnL does not convert commissions charged in third-party assets into USDT

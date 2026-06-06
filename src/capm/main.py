@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -88,6 +89,21 @@ def _agent_decision_payload(entry) -> dict[str, object]:
     }
 
 
+def _live_cycle_payload(result) -> dict[str, object]:
+    """Build the stable CLI representation for one live-cycle result."""
+    return {
+        "status": "skipped" if result.skipped_reason else "ok",
+        "cycle_time": result.cycle_time,
+        "symbols": result.symbols,
+        "ingested_candles": result.ingested_candles,
+        "persisted_indicators": result.persisted_indicators,
+        "predictions_journaled": result.predictions_journaled,
+        "predictions_settled": result.predictions_settled,
+        "skipped_reason": result.skipped_reason,
+        "decisions": [_agent_decision_payload(entry) for entry in result.decisions],
+    }
+
+
 def _parse_model_artifacts(values: list[str]) -> dict[str, tuple[Path, ...]]:
     """Parse repeated SYMBOL=PATH model-artifact CLI values."""
     parsed: dict[str, list[Path]] = {}
@@ -126,6 +142,141 @@ def _add_operational_risk_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-orders-per-day", type=int, default=20)
     parser.add_argument("--order-cooldown-minutes", type=int, default=5)
     parser.add_argument("--max-total-exposure-usdt", type=float, default=100.0)
+
+
+def _add_live_cycle_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add shared live-cycle arguments."""
+    parser.add_argument("--interval", default="1m", help="Candle interval, e.g. 1m.")
+    parser.add_argument("--mode", default="dry-run", choices=["dry-run", "spot-demo"])
+    parser.add_argument(
+        "--model-artifact",
+        action="append",
+        required=True,
+        help="Production model mapping in SYMBOL=PATH form. Repeat to run multiple models.",
+    )
+    parser.add_argument(
+        "--market-data-mode",
+        default="demo",
+        choices=["demo", "live"],
+        help="Binance public REST environment used to backfill closed candles.",
+    )
+    parser.add_argument(
+        "--max-inline-gap-minutes",
+        type=int,
+        default=180,
+        help="Refuse inline candle recovery beyond this duration.",
+    )
+    parser.add_argument(
+        "--max-model-age-days",
+        type=int,
+        default=3,
+        help="Refuse production model artifacts older than this many days.",
+    )
+    parser.add_argument(
+        "--allow-large-gap-recovery",
+        action="store_true",
+        help="Explicitly allow a long REST candle backfill before the cycle continues.",
+    )
+    parser.add_argument(
+        "--allow-stale-models",
+        action="store_true",
+        help="Explicitly allow stale artifacts for a non-production recovery check.",
+    )
+    parser.add_argument("--max-trade-usdt", type=float, default=25.0)
+    parser.add_argument("--max-position-usdt", type=float, default=100.0)
+    _add_operational_risk_arguments(parser)
+
+
+def _seconds_until_next_cycle(*, interval: str, offset_seconds: float, now: datetime | None = None) -> float:
+    """Return seconds until just after the next candle boundary."""
+    current = now or datetime.now(UTC)
+    normalized = current.astimezone(UTC) if current.tzinfo else current.replace(tzinfo=UTC)
+    interval_seconds = int(interval_to_timedelta(interval).total_seconds())
+    next_boundary = ((int(normalized.timestamp()) // interval_seconds) + 1) * interval_seconds
+    return max(0.0, next_boundary + offset_seconds - normalized.timestamp())
+
+
+def _build_live_cycle_service(args, *, repository=None, market_data_adapter=None, exchange_adapter=None, llm_policy=None):
+    """Compose one live trading-cycle service from CLI arguments."""
+    resolved_repository = repository or build_repository()
+    resolved_market_data_adapter = market_data_adapter or BinanceSpotMarketDataAdapter(
+        BinanceSettings.from_env(mode=args.market_data_mode)
+    )
+    resolved_exchange_adapter = exchange_adapter
+    if resolved_exchange_adapter is None and args.mode == "spot-demo":
+        resolved_exchange_adapter = BinanceSpotDemoTradingAdapter(BinanceSettings.from_env(mode="demo"))
+    resolved_llm_policy = llm_policy or LLMDecisionPolicy(LLMSettings.from_env())
+    trading_agent = TradingAgentService(
+        repository=resolved_repository,
+        exchange_adapter=resolved_exchange_adapter,
+    )
+    service = LiveTradingCycleService(
+        repository=resolved_repository,
+        market_data_adapter=resolved_market_data_adapter,
+        trading_agent=trading_agent,
+        llm_policy=resolved_llm_policy,
+        artifacts_by_symbol=_parse_model_artifacts(args.model_artifact),
+        max_inline_gap_minutes=args.max_inline_gap_minutes,
+        max_model_age_days=args.max_model_age_days,
+        allow_large_gap_recovery=args.allow_large_gap_recovery,
+        allow_stale_models=args.allow_stale_models,
+        risk_config=_risk_config_from_args(args),
+    )
+    return service, resolved_market_data_adapter, resolved_exchange_adapter, resolved_llm_policy
+
+
+def _run_live_loop(args, *, sleep=time.sleep, now=lambda: datetime.now(UTC)) -> None:
+    """Run repeated closed-candle live cycles with bounded failure handling."""
+    service, market_data_adapter, exchange_adapter, llm_policy = _build_live_cycle_service(args)
+    attempted_cycles = 0
+    successful_cycles = 0
+    consecutive_errors = 0
+    try:
+        while args.max_cycles is None or attempted_cycles < args.max_cycles:
+            sleep_seconds = _seconds_until_next_cycle(
+                interval=args.interval,
+                offset_seconds=args.cycle_offset_seconds,
+                now=now(),
+            )
+            if sleep_seconds:
+                sleep(sleep_seconds)
+            started_at = now()
+            attempted_cycles += 1
+            try:
+                result = service.run_once(interval=args.interval, mode=args.mode)
+                consecutive_errors = 0
+                successful_cycles += 1
+                payload = _live_cycle_payload(result)
+                payload["loop"] = {
+                    "cycle_index": attempted_cycles,
+                    "started_at": started_at,
+                    "finished_at": now(),
+                }
+                print_json(payload)
+            except (FileNotFoundError, KeyboardInterrupt):
+                raise
+            except Exception as exc:
+                consecutive_errors += 1
+                print_json(
+                    {
+                        "status": "error",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "cycle_index": attempted_cycles,
+                        "consecutive_errors": consecutive_errors,
+                        "stop_after_error_count": args.stop_after_error_count,
+                    }
+                )
+                if consecutive_errors >= args.stop_after_error_count:
+                    raise SystemExit(1) from exc
+                sleep(args.sleep_after_error_seconds)
+        if attempted_cycles and successful_cycles == 0 and consecutive_errors:
+            raise SystemExit(1)
+    finally:
+        llm_policy.close()
+        market_data_adapter.close()
+        if exchange_adapter is not None:
+            exchange_adapter.close()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -270,45 +421,26 @@ def build_parser() -> argparse.ArgumentParser:
         "run-live-once",
         help="Refresh closed candles, journal predictions, and run one LLM trading cycle.",
     )
-    live_once_parser.add_argument("--interval", default="1m", help="Candle interval, e.g. 1m.")
-    live_once_parser.add_argument("--mode", default="dry-run", choices=["dry-run", "spot-demo"])
-    live_once_parser.add_argument(
-        "--model-artifact",
-        action="append",
-        required=True,
-        help="Production model mapping in SYMBOL=PATH form. Repeat to run multiple models.",
+    _add_live_cycle_arguments(live_once_parser)
+    run_loop_parser = agent_subparsers.add_parser(
+        "run-loop",
+        help="Continuously run closed-candle live cycles.",
     )
-    live_once_parser.add_argument(
-        "--market-data-mode",
-        default="demo",
-        choices=["demo", "live"],
-        help="Binance public REST environment used to backfill closed candles.",
+    _add_live_cycle_arguments(run_loop_parser)
+    run_loop_parser.add_argument(
+        "--cycle-offset-seconds",
+        type=float,
+        default=2.0,
+        help="Seconds after candle close before each cycle starts.",
     )
-    live_once_parser.add_argument(
-        "--max-inline-gap-minutes",
+    run_loop_parser.add_argument(
+        "--max-cycles",
         type=int,
-        default=180,
-        help="Refuse inline candle recovery beyond this duration.",
+        default=None,
+        help="Stop after this many cycles. Omit to run until interrupted.",
     )
-    live_once_parser.add_argument(
-        "--max-model-age-days",
-        type=int,
-        default=3,
-        help="Refuse production model artifacts older than this many days.",
-    )
-    live_once_parser.add_argument(
-        "--allow-large-gap-recovery",
-        action="store_true",
-        help="Explicitly allow a long REST candle backfill before the cycle continues.",
-    )
-    live_once_parser.add_argument(
-        "--allow-stale-models",
-        action="store_true",
-        help="Explicitly allow stale artifacts for a non-production recovery check.",
-    )
-    live_once_parser.add_argument("--max-trade-usdt", type=float, default=25.0)
-    live_once_parser.add_argument("--max-position-usdt", type=float, default=100.0)
-    _add_operational_risk_arguments(live_once_parser)
+    run_loop_parser.add_argument("--stop-after-error-count", type=int, default=3)
+    run_loop_parser.add_argument("--sleep-after-error-seconds", type=float, default=10.0)
     agent_journal_parser = agent_subparsers.add_parser("journal", help="Inspect agent decision journal rows.")
     agent_journal_subparsers = agent_journal_parser.add_subparsers(dest="agent_journal_command", required=True)
     agent_summary_parser = agent_journal_subparsers.add_parser("summary", help="Summarize agent decision journal rows.")
@@ -590,51 +722,25 @@ def main() -> None:
         return
 
     if args.command == "agent" and args.agent_command == "run-live-once":
-        repository = build_repository()
-        market_data_adapter = BinanceSpotMarketDataAdapter(
-            BinanceSettings.from_env(mode=args.market_data_mode)
-        )
-        exchange_adapter = (
-            BinanceSpotDemoTradingAdapter(BinanceSettings.from_env(mode="demo"))
-            if args.mode == "spot-demo"
-            else None
-        )
-        llm_policy = LLMDecisionPolicy(LLMSettings.from_env())
+        service, market_data_adapter, exchange_adapter, llm_policy = _build_live_cycle_service(args)
         try:
-            trading_agent = TradingAgentService(
-                repository=repository,
-                exchange_adapter=exchange_adapter,
-            )
-            result = LiveTradingCycleService(
-                repository=repository,
-                market_data_adapter=market_data_adapter,
-                trading_agent=trading_agent,
-                llm_policy=llm_policy,
-                artifacts_by_symbol=_parse_model_artifacts(args.model_artifact),
-                max_inline_gap_minutes=args.max_inline_gap_minutes,
-                max_model_age_days=args.max_model_age_days,
-                allow_large_gap_recovery=args.allow_large_gap_recovery,
-                allow_stale_models=args.allow_stale_models,
-                risk_config=_risk_config_from_args(args),
-            ).run_once(interval=args.interval, mode=args.mode)
-            print_json(
-                {
-                    "status": "skipped" if result.skipped_reason else "ok",
-                    "cycle_time": result.cycle_time,
-                    "symbols": result.symbols,
-                    "ingested_candles": result.ingested_candles,
-                    "persisted_indicators": result.persisted_indicators,
-                    "predictions_journaled": result.predictions_journaled,
-                    "predictions_settled": result.predictions_settled,
-                    "skipped_reason": result.skipped_reason,
-                    "decisions": [_agent_decision_payload(entry) for entry in result.decisions],
-                }
-            )
+            result = service.run_once(interval=args.interval, mode=args.mode)
+            print_json(_live_cycle_payload(result))
         finally:
             llm_policy.close()
             market_data_adapter.close()
             if exchange_adapter is not None:
                 exchange_adapter.close()
+        return
+
+    if args.command == "agent" and args.agent_command == "run-loop":
+        if args.max_cycles is not None and args.max_cycles < 1:
+            parser.error("agent run-loop --max-cycles must be greater than zero")
+        if args.stop_after_error_count < 1:
+            parser.error("agent run-loop --stop-after-error-count must be greater than zero")
+        if args.cycle_offset_seconds < 0 or args.sleep_after_error_seconds < 0:
+            parser.error("agent run-loop sleep values cannot be negative")
+        _run_live_loop(args)
         return
 
     if args.command == "agent" and args.agent_command == "journal" and args.agent_journal_command == "summary":

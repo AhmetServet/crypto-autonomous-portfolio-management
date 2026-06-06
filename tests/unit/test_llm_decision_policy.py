@@ -151,6 +151,15 @@ class LLMDecisionPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "hold requires null amounts"):
             policy.decide_batch((_request("BTCUSDT"),))
 
+    def test_policy_includes_provider_body_for_http_errors(self) -> None:
+        client = httpx.Client(
+            transport=httpx.MockTransport(lambda _request: httpx.Response(400, text='{"error":"bad model"}'))
+        )
+        policy = LLMDecisionPolicy(LLMSettings(api_key="secret", model="bad-model", retry_attempts=1), client=client)
+
+        with self.assertRaisesRegex(ValueError, "bad model"):
+            policy.decide_batch((_request("BTCUSDT"),))
+
 
 if __name__ == "__main__":
     unittest.main()

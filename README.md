@@ -279,6 +279,19 @@ uv run capm agent run-live-once \
 
 `run-live-once` acquires a PostgreSQL advisory lock for the candle boundary, fills missing closed candles through REST, recalculates the recent persisted indicator window, settles matured predictions, journals one new prediction per configured model artifact, and runs one batched LLM decision call. Each artifact prediction runs in an isolated worker process so native ML runtimes such as XGBoost and PyTorch do not load conflicting OpenMP libraries into the same process. Repeat `--model-artifact SYMBOL=PATH` for each production model. The default is dry-run; pass `--mode spot-demo` explicitly to allow approved Demo orders.
 
+Run the same pipeline continuously after each closed 1m candle:
+
+```bash
+uv run capm agent run-loop \
+  --interval 1m \
+  --mode dry-run \
+  --max-cycles 3 \
+  --model-artifact BTCUSDT=experiments/results/<xgboost_run_id>/model.pkl \
+  --model-artifact BTCUSDT=experiments/results/<lstm_run_id>/model.pkl
+```
+
+`run-loop` sleeps until shortly after the next candle boundary, calls the same live-cycle service, prints one JSON payload per cycle, and closes clients when it exits. Use `--max-cycles` for smoke tests; omit it for unattended operation. `--stop-after-error-count` and `--sleep-after-error-seconds` bound repeated safe failures without bypassing operational risk controls.
+
 The live cycle stops before prediction and trading when the candle gap exceeds `180` minutes or a model artifact file is older than `3` days. Retrain stale models before production use. For an explicit recovery check, use `--allow-large-gap-recovery` to backfill a longer candle gap and `--allow-stale-models` only when you intentionally want to validate the pipeline with an outdated artifact. Adjust the thresholds with `--max-inline-gap-minutes` and `--max-model-age-days`.
 
 Spot Demo submissions also pass persistent operational controls derived from `agent_decision_journal`: emergency stop, FIFO daily realized-loss limit, maximum orders per day, order cooldown, and priced exposure limit. Defaults are `50` USDT realized loss, `20` orders per day, `5` cooldown minutes, and `100` USDT exposure. Override them with the corresponding `--max-*` flags. Set `CAPM_TRADING_EMERGENCY_STOP=true` to block submissions without changing scheduler arguments.
