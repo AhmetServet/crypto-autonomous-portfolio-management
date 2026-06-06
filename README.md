@@ -338,6 +338,16 @@ curl -X POST http://127.0.0.1:8000/api/spot-demo/market-buy \
   -d '{"symbol":"BTCUSDT","usdt_amount":10,"confirm":true}'
 ```
 
+Run the dashboard frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend expects the API at `http://127.0.0.1:8000` by default. Override it with `VITE_CAPM_API_BASE_URL` when needed.
+
 Summarize recorded decisions:
 
 ```bash
