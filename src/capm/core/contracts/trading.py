@@ -19,6 +19,14 @@ class AgentDecisionJournalRepositoryPort(Protocol):
     def save_agent_decision_journal_entry(self, entry: AgentDecisionJournalEntry) -> AgentDecisionJournalEntry:
         """Insert or return one idempotent decision row."""
 
+    def list_recent_agent_decision_journal_entries(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int = 20,
+    ) -> tuple[AgentDecisionJournalEntry, ...]:
+        """Return recent agent decision rows for observability."""
+
     def summarize_agent_decision_journal(
         self,
         symbol: str,

@@ -415,6 +415,37 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
         self.assertAlmostEqual(summary.mape, 1.0 / 103.0)
         self.assertEqual(summary.direction_accuracy, 1.0)
 
+    def test_repository_lists_recent_prediction_journal_entries(self) -> None:
+        for minute in range(3):
+            self.repository.save_prediction_journal_entry(
+                PredictionJournalEntry(
+                    id=None,
+                    created_at=None,
+                    updated_at=None,
+                    symbol="BTCUSDT",
+                    interval="1m",
+                    model_name="xgboost",
+                    artifact_kind="production_tabular",
+                    artifact_path=f"experiments/results/run-{minute}/model.pkl",
+                    artifact_sha256=str(minute) * 64,
+                    reference_time=datetime(2024, 1, 1, 0, minute, tzinfo=UTC),
+                    prediction_time=datetime(2024, 1, 1, 0, minute + 15, tzinfo=UTC),
+                    forecast_horizon=15,
+                    target_field="close",
+                    target_mode="return",
+                    reference_value=100.0,
+                    predicted_value=101.0 + minute,
+                    predicted_return=0.01,
+                    predicted_direction="up",
+                    feature_names=("sma_3_close",),
+                    metadata={},
+                )
+            )
+
+        rows = self.repository.list_recent_prediction_journal_entries("BTCUSDT", "1m", limit=2)
+
+        self.assertEqual([row.reference_time.minute for row in rows], [2, 1])
+
     def test_repository_persists_and_summarizes_agent_decision_journal(self) -> None:
         entry = AgentDecisionJournalEntry(
             cycle_id="2024-01-01T00:00:00+00:00:BTCUSDT:1m:dry_run",
@@ -457,6 +488,25 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
         self.assertEqual(updated.execution_status, "filled")
         self.assertEqual(updated.exchange_order_id, "123")
 
+    def test_repository_lists_recent_agent_decision_journal_entries(self) -> None:
+        for minute in range(3):
+            self.repository.save_agent_decision_journal_entry(
+                AgentDecisionJournalEntry(
+                    cycle_id=f"cycle-{minute}",
+                    mode="dry-run",
+                    symbol="BTCUSDT",
+                    interval="1m",
+                    reference_time=datetime(2024, 1, 1, 0, minute, tzinfo=UTC),
+                    action="hold",
+                    risk_status="skipped",
+                    execution_status="not_submitted",
+                )
+            )
+
+        rows = self.repository.list_recent_agent_decision_journal_entries("BTCUSDT", "1m", limit=2)
+
+        self.assertEqual([row.reference_time.minute for row in rows], [2, 1])
+
     def test_repository_builds_operational_risk_snapshot_from_filled_orders(self) -> None:
         at = datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
         for index, (action, quantity, quote) in enumerate((("buy", "1", "100"), ("sell", "0.5", "45"))):
@@ -491,6 +541,9 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
         self.assertEqual(snapshot.orders_today, 2)
         self.assertEqual(snapshot.realized_pnl_today_usdt, -5)
         self.assertEqual(snapshot.last_order_at, at)
+        self.assertEqual(snapshot.position_quantity, 0.5)
+        self.assertEqual(snapshot.position_cost_usdt, 50)
+        self.assertEqual(snapshot.average_entry_price, 100)
 
 
 if __name__ == "__main__":

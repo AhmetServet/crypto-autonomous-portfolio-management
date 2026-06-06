@@ -904,6 +904,33 @@ class TimescaleMarketDataRepository:
             newest_by_artifact.setdefault((row.model_name, row.artifact_sha256), row)
         return tuple(newest_by_artifact.values())
 
+    def list_recent_prediction_journal_entries(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int = 20,
+    ) -> tuple[PredictionJournalEntry, ...]:
+        """Return recent prediction journal rows for observability."""
+        self._ensure_static_table(self._prediction_journal_model)
+        if limit < 1:
+            raise ValueError("`limit` must be positive.")
+        normalized_symbol = normalize_symbol(symbol)
+        with self._session_factory() as session:
+            stmt = (
+                select(self._prediction_journal_model)
+                .where(
+                    self._prediction_journal_model.symbol == normalized_symbol,
+                    self._prediction_journal_model.interval == interval,
+                )
+                .order_by(
+                    self._prediction_journal_model.reference_time.desc(),
+                    self._prediction_journal_model.created_at.desc(),
+                    self._prediction_journal_model.id.desc(),
+                )
+                .limit(limit)
+            )
+            return tuple(row.to_domain() for row in session.scalars(stmt).all())
+
     def settle_prediction_journal_entry(self, settlement: PredictionJournalSettlement) -> PredictionJournalEntry:
         """Persist actual outcome fields for one journal entry."""
         self._ensure_static_table(self._prediction_journal_model)
@@ -1032,6 +1059,33 @@ class TimescaleMarketDataRepository:
             session.refresh(row)
             return row.to_domain()
 
+    def list_recent_agent_decision_journal_entries(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int = 20,
+    ) -> tuple[AgentDecisionJournalEntry, ...]:
+        """Return recent agent decision rows for observability."""
+        self._ensure_static_table(self._agent_decision_journal_model)
+        if limit < 1:
+            raise ValueError("`limit` must be positive.")
+        normalized_symbol = normalize_symbol(symbol)
+        with self._session_factory() as session:
+            stmt = (
+                select(self._agent_decision_journal_model)
+                .where(
+                    self._agent_decision_journal_model.symbol == normalized_symbol,
+                    self._agent_decision_journal_model.interval == interval,
+                )
+                .order_by(
+                    self._agent_decision_journal_model.reference_time.desc(),
+                    self._agent_decision_journal_model.created_at.desc(),
+                    self._agent_decision_journal_model.id.desc(),
+                )
+                .limit(limit)
+            )
+            return tuple(row.to_domain() for row in session.scalars(stmt).all())
+
     def summarize_agent_decision_journal(
         self,
         symbol: str,
@@ -1122,6 +1176,8 @@ class TimescaleMarketDataRepository:
             realized_pnl_today_usdt=realized_pnl_today,
             observed_at=normalized_at,
             last_order_at=last_order_at,
+            position_quantity=inventory_quantity,
+            position_cost_usdt=inventory_cost,
         )
 
     @staticmethod

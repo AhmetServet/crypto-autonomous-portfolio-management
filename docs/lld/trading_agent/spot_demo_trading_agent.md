@@ -687,6 +687,15 @@ Implemented in the continuous-scheduler step:
 - log each cycle as a structured JSON payload
 - close LLM, market-data, and Spot Demo clients on exit
 
+Implemented in the observability-report step:
+- add `capm agent report`
+- include latest candle and indicator readiness
+- include recent prediction journal rows and recent agent decisions
+- include prediction and decision summaries over a configurable lookback window
+- include symbol-scoped operational-risk state
+- derive current position quantity, average entry price, exposure, and unrealized PnL from filled Spot Demo journal rows
+- optionally include stored LLM prompts and current Spot Demo balances
+
 Current valuation limitations:
 - exposure, daily order count, cooldown, and realized PnL are symbol-scoped until account-wide multi-coin controls are added
 - FIFO realized PnL does not convert commissions charged in third-party assets into USDT

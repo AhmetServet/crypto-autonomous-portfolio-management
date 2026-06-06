@@ -298,6 +298,17 @@ Spot Demo submissions also pass persistent operational controls derived from `ag
 
 The first operational snapshot is symbol-scoped: exposure, daily order count, cooldown, and FIFO realized PnL are calculated for the current symbol. FIFO realized PnL uses persisted exchange quote quantities and does not convert fees charged in third-party assets into USDT. Extend these controls to account scope before enabling a multi-coin portfolio.
 
+Show a recent operational report:
+
+```bash
+uv run capm agent report \
+  --symbol BTCUSDT \
+  --interval 1m \
+  --limit 20
+```
+
+The report includes the latest candle and indicator row, current derived position state, recent prediction-journal rows, recent agent decisions, prediction and decision summaries over the last 24 hours, and the current symbol-scoped operational-risk snapshot. Add `--include-prompts` to include stored LLM prompt metadata, and `--include-spot-demo` to read current Spot Demo balances.
+
 Summarize recorded decisions:
 
 ```bash

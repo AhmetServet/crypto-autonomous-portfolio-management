@@ -77,6 +77,15 @@ class OperationalRiskSnapshot:
     realized_pnl_today_usdt: float
     observed_at: datetime
     last_order_at: datetime | None = None
+    position_quantity: float = 0.0
+    position_cost_usdt: float = 0.0
+
+    @property
+    def average_entry_price(self) -> float | None:
+        """Return average entry price for the remaining open position."""
+        if self.position_quantity <= 0:
+            return None
+        return self.position_cost_usdt / self.position_quantity
 
 
 @dataclass(frozen=True, slots=True)
