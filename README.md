@@ -309,6 +309,23 @@ uv run capm agent report \
 
 The report includes the latest candle and indicator row, current derived position state, recent prediction-journal rows, recent agent decisions, prediction and decision summaries over the last 24 hours, and the current symbol-scoped operational-risk snapshot. Add `--include-prompts` to include stored LLM prompt metadata, and `--include-spot-demo` to read current Spot Demo balances.
 
+Run the read-only dashboard API:
+
+```bash
+uv run capm-api --host 127.0.0.1 --port 8000
+```
+
+The dashboard API exposes:
+
+- `GET /api/health`
+- `GET /api/symbols?interval=1m`
+- `GET /api/dashboard/summary?symbol=BTCUSDT&interval=1m`
+- `GET /api/agent/decisions?symbol=BTCUSDT&interval=1m&limit=50`
+- `GET /api/predictions?symbol=BTCUSDT&interval=1m&limit=100`
+- `GET /api/positions?symbol=BTCUSDT&interval=1m`
+- `GET /api/risk/status?symbol=BTCUSDT`
+- `GET /api/llm/prompts/<journal_id>`
+
 Summarize recorded decisions:
 
 ```bash

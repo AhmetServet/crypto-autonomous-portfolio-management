@@ -507,6 +507,29 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
 
         self.assertEqual([row.reference_time.minute for row in rows], [2, 1])
 
+    def test_repository_gets_agent_decision_journal_entry_by_id(self) -> None:
+        saved = self.repository.save_agent_decision_journal_entry(
+            AgentDecisionJournalEntry(
+                cycle_id="cycle-1",
+                mode="dry-run",
+                symbol="BTCUSDT",
+                interval="1m",
+                reference_time=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+                action="hold",
+                risk_status="skipped",
+                execution_status="not_submitted",
+                metadata={"llm_prompt": "prompt"},
+            )
+        )
+
+        row = self.repository.get_agent_decision_journal_entry(int(saved.id))
+
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.id, saved.id)
+        self.assertEqual(row.metadata["llm_prompt"], "prompt")
+        self.assertIsNone(self.repository.get_agent_decision_journal_entry(9999))
+
     def test_repository_builds_operational_risk_snapshot_from_filled_orders(self) -> None:
         at = datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
         for index, (action, quantity, quote) in enumerate((("buy", "1", "100"), ("sell", "0.5", "45"))):

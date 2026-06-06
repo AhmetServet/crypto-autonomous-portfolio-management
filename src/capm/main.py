@@ -20,6 +20,7 @@ from capm.services.prediction_runtime import PredictionRuntimeService
 from capm.services.trading_agent import TradingAgentService
 from capm.services.llm_decision_policy import LLMDecisionPolicy
 from capm.services.live_cycle import LiveTradingCycleService
+from capm.services.dashboard import DashboardReportRequest, DashboardReportService
 from capm.domains.trading import DecisionAction, PortfolioSnapshot, ProposedDecision, RiskConfig
 
 
@@ -104,171 +105,19 @@ def _live_cycle_payload(result) -> dict[str, object]:
     }
 
 
-def _prediction_report_payload(entry) -> dict[str, object]:
-    """Build a compact report representation for one prediction journal row."""
-    return {
-        "id": entry.id,
-        "model_name": entry.model_name,
-        "artifact_kind": entry.artifact_kind,
-        "artifact_path": entry.artifact_path,
-        "reference_time": entry.reference_time,
-        "prediction_time": entry.prediction_time,
-        "forecast_horizon": entry.forecast_horizon,
-        "target_mode": entry.target_mode,
-        "reference_value": entry.reference_value,
-        "predicted_value": entry.predicted_value,
-        "predicted_return": entry.predicted_return,
-        "predicted_direction": entry.predicted_direction,
-        "actual_return": entry.actual_return,
-        "actual_direction": entry.actual_direction,
-        "direction_correct": entry.direction_correct,
-        "settled_at": entry.settled_at,
-    }
-
-
-def _decision_report_payload(entry, *, include_prompts: bool = False) -> dict[str, object]:
-    """Build a compact report representation for one agent decision row."""
-    metadata = dict(entry.metadata)
-    payload: dict[str, object] = {
-        "id": entry.id,
-        "cycle_id": entry.cycle_id,
-        "created_at": entry.created_at,
-        "updated_at": entry.updated_at,
-        "mode": entry.mode,
-        "symbol": entry.symbol,
-        "interval": entry.interval,
-        "reference_time": entry.reference_time,
-        "action": entry.action,
-        "requested_quantity": entry.requested_quantity,
-        "requested_usdt_amount": entry.requested_usdt_amount,
-        "confidence": entry.confidence,
-        "reason": entry.reason,
-        "prediction_journal_ids": entry.prediction_journal_ids,
-        "risk_status": entry.risk_status,
-        "risk_violations": entry.risk_violations,
-        "execution_status": entry.execution_status,
-        "exchange_order_id": entry.exchange_order_id,
-        "exchange_client_order_id": entry.exchange_client_order_id,
-        "llm": {
-            "model": metadata.get("llm_model"),
-            "provider_host": metadata.get("llm_provider_host"),
-            "latency_seconds": metadata.get("llm_latency_seconds"),
-            "attempts": metadata.get("llm_attempts"),
-            "usage": metadata.get("llm_usage"),
-            "raw_response": metadata.get("llm_raw_response") if include_prompts else None,
-            "system_prompt": metadata.get("llm_system_prompt") if include_prompts else None,
-            "prompt": metadata.get("llm_prompt") if include_prompts else None,
-        },
-        "exchange_response": entry.exchange_response,
-    }
-    return payload
-
-
 def _agent_report_payload(args) -> dict[str, object]:
     """Build an operational report for recent agent state."""
     repository = build_repository()
-    now = datetime.now(UTC)
-    symbol = args.symbol
-    interval = args.interval
-    latest_candle_time = repository.get_latest_candle_time(symbol, interval)
-    latest_candle = None
-    if latest_candle_time is not None:
-        latest_candle = repository.get_candle(symbol, interval, latest_candle_time)
-    latest_indicator_time = repository.get_latest_indicator_time(symbol, interval)
-    latest_indicator = None
-    if latest_indicator_time is not None:
-        latest_indicator = repository.get_indicator_set(symbol, interval, latest_indicator_time)
-
-    summary_start = now - timedelta(hours=args.lookback_hours)
-    predictions = repository.list_recent_prediction_journal_entries(symbol, interval, args.limit)
-    decisions = repository.list_recent_agent_decision_journal_entries(symbol, interval, args.limit)
-    prediction_summary = PredictionJournalService(
-        journal_repository=repository,
-        market_data_repository=repository,
-    ).summarize(
-        symbol=symbol,
-        interval=interval,
-        start_time=summary_start,
-        end_time=now,
+    return DashboardReportService(repository).summary(
+        DashboardReportRequest(
+            symbol=args.symbol,
+            interval=args.interval,
+            limit=args.limit,
+            lookback_hours=args.lookback_hours,
+            include_prompts=args.include_prompts,
+            include_spot_demo=args.include_spot_demo,
+        )
     )
-    decision_summary = repository.summarize_agent_decision_journal(
-        symbol=symbol,
-        interval=interval,
-        start_time=summary_start,
-        end_time=now,
-    )
-    operational_snapshot = repository.get_operational_risk_snapshot(symbol, now)
-    latest_close = float(latest_candle.close) if latest_candle else None
-    average_entry_price = operational_snapshot.average_entry_price
-    current_exposure_usdt = (
-        operational_snapshot.position_quantity * latest_close
-        if latest_close is not None
-        else None
-    )
-    unrealized_pnl_usdt = (
-        current_exposure_usdt - operational_snapshot.position_cost_usdt
-        if current_exposure_usdt is not None and operational_snapshot.position_quantity > 0
-        else None
-    )
-    cooldown_minutes = RiskConfig().order_cooldown_minutes
-    next_order_allowed_at = (
-        operational_snapshot.last_order_at + timedelta(minutes=cooldown_minutes)
-        if operational_snapshot.last_order_at is not None
-        else None
-    )
-
-    portfolio = None
-    if args.include_spot_demo:
-        adapter = BinanceSpotDemoTradingAdapter(BinanceSettings.from_env(mode="demo"))
-        try:
-            portfolio = adapter.get_portfolio(symbol).to_dict()
-        finally:
-            adapter.close()
-
-    return {
-        "status": "ok",
-        "generated_at": now,
-        "symbol": symbol,
-        "interval": interval,
-        "lookback_hours": args.lookback_hours,
-        "market": {
-            "latest_candle_time": latest_candle_time,
-            "latest_candle": latest_candle.to_dict() if latest_candle else None,
-            "latest_indicator_time": latest_indicator_time,
-            "indicator_ready": latest_indicator.is_ready if latest_indicator else None,
-            "missing_indicator_outputs": latest_indicator.missing_outputs if latest_indicator else (),
-            "indicators": latest_indicator.values if latest_indicator else {},
-        },
-        "spot_demo_portfolio": portfolio,
-        "operational_risk": {
-            "observed_at": operational_snapshot.observed_at,
-            "orders_today": operational_snapshot.orders_today,
-            "realized_pnl_today_usdt": operational_snapshot.realized_pnl_today_usdt,
-            "last_order_at": operational_snapshot.last_order_at,
-            "next_order_allowed_at": next_order_allowed_at,
-            "cooldown_active": bool(next_order_allowed_at and now < next_order_allowed_at),
-        },
-        "position": {
-            "status": "long" if operational_snapshot.position_quantity > 0 else "flat",
-            "quantity": operational_snapshot.position_quantity,
-            "cost_usdt": operational_snapshot.position_cost_usdt,
-            "average_entry_price": average_entry_price,
-            "current_price": latest_close,
-            "current_exposure_usdt": current_exposure_usdt,
-            "unrealized_pnl_usdt": unrealized_pnl_usdt,
-            "unrealized_pnl_pct": (
-                (unrealized_pnl_usdt / operational_snapshot.position_cost_usdt)
-                if unrealized_pnl_usdt is not None and operational_snapshot.position_cost_usdt > 0
-                else None
-            ),
-        },
-        "prediction_summary": prediction_summary.to_dict(),
-        "decision_summary": decision_summary.to_dict(),
-        "recent_predictions": [_prediction_report_payload(entry) for entry in predictions],
-        "recent_decisions": [
-            _decision_report_payload(entry, include_prompts=args.include_prompts) for entry in decisions
-        ],
-    }
 
 
 def _parse_model_artifacts(values: list[str]) -> dict[str, tuple[Path, ...]]:

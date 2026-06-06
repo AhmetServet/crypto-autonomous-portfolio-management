@@ -8,12 +8,14 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi",
     "httpx>=0.28.1",
     "psycopg2>=2.9.11",
     "psycopg[binary]>=3.2.0",
     "python-dotenv>=1.2.2",
     "sqlalchemy>=2.0.0",
     "scikit-learn>=1.8.0",
+    "uvicorn",
     "xgboost>=3.2.0",
 ]
 
@@ -42,6 +44,7 @@ deep-learning = [
 
 [project.scripts]
 capm = "capm:main"
+capm-api = "capm.api.app:main"
 capm-experiment-walkforward = "capm.experiments.walk_forward:main"
 capm-train-production = "capm.experiments.train_production:main"
 capm-train-deep-learning = "capm.experiments.train_deep_learning:main"
