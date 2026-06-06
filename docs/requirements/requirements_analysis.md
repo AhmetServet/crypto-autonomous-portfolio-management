@@ -25,7 +25,7 @@
 The system is a fully autonomous, end-to-end portfolio management agent for Binance spot markets. It ingests real-time and historical market data, runs a multi-layered prediction pipeline, and delegates final trading decisions (including position sizing) to an LLM-based agent. The agent operates within a hard-rule risk control layer before any order reaches the exchange.
 
 **Execution environment:** Personal VPS, 24/7  
-**Exchange:** Binance Spot (testnet for paper trading, live for production)  
+**Exchange:** Binance Spot (Spot Demo Mode for paper trading, live for production)  
 **Quote currency:** USDT  
 **Candle interval:** 1 minute
 
@@ -331,7 +331,7 @@ Every cancelled order is written to a dedicated risk log with:
 
 ## 9. Paper Trading
 
-- **Environment:** Binance Testnet
+- **Environment:** Binance Spot Demo Mode
 - **Minimum autonomous orders:** 100
 - **Pipeline:** Identical to production; only the Binance API base URL differs
 - **Validation goals:**
@@ -430,7 +430,7 @@ Top 20 watchlist refresh (Binance 24h volume)
 | Extensibility   | Adding a new coin or model requires only configuration changes, not code changes |
 | Security        | No secrets in source code or version control                                     |
 | Observability   | All LLM calls, model signals, orders, and risk events are logged with timestamps |
-| Testnet uptime  | Minimum 7 consecutive days without manual intervention                           |
+| Spot Demo uptime | Minimum 7 consecutive days without manual intervention                          |
 
 ---
 

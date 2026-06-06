@@ -8,11 +8,6 @@ from typing import Any
 
 from capm.core.contracts import ForecastModelPort
 
-from .deep_learning import GRUForecastingModel, LSTMForecastingModel
-from .ml import LightGBMForecastingModel, XGBoostForecastingModel
-from .statistical import ARIMAForecastingModel, ProphetForecastingModel
-
-
 @dataclass(frozen=True, slots=True)
 class RegisteredModel:
     """Model metadata plus a zero-state factory."""
@@ -22,6 +17,8 @@ class RegisteredModel:
 
 
 def _build_arima(parameters: dict[str, Any]) -> ForecastModelPort:
+    from .statistical import ARIMAForecastingModel
+
     order = tuple(parameters.get("order", (1, 0, 0)))
     if len(order) != 3:
         raise ValueError("ARIMA `order` must contain exactly three integers.")
@@ -35,22 +32,32 @@ def _build_arima(parameters: dict[str, Any]) -> ForecastModelPort:
 
 
 def _build_prophet(parameters: dict[str, Any]) -> ForecastModelPort:
+    from .statistical import ProphetForecastingModel
+
     return ProphetForecastingModel(model_kwargs=dict(parameters))
 
 
 def _build_xgboost(parameters: dict[str, Any]) -> ForecastModelPort:
+    from .ml import XGBoostForecastingModel
+
     return XGBoostForecastingModel(model_kwargs=dict(parameters))
 
 
 def _build_lightgbm(parameters: dict[str, Any]) -> ForecastModelPort:
+    from .ml import LightGBMForecastingModel
+
     return LightGBMForecastingModel(model_kwargs=dict(parameters))
 
 
 def _build_lstm(parameters: dict[str, Any]) -> ForecastModelPort:
+    from .deep_learning import LSTMForecastingModel
+
     return LSTMForecastingModel(model_kwargs=dict(parameters))
 
 
 def _build_gru(parameters: dict[str, Any]) -> ForecastModelPort:
+    from .deep_learning import GRUForecastingModel
+
     return GRUForecastingModel(model_kwargs=dict(parameters))
 
 

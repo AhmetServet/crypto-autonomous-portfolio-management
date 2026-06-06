@@ -13,6 +13,7 @@ from sqlalchemy import inspect, select
 from capm.domains.features import ComputedIndicatorSet, GAP_REASON_MISSING_DERIVED_ROWS
 from capm.domains.market_data import OHLCV
 from capm.domains.prediction import PredictionJournalEntry, PredictionJournalSettlement
+from capm.domains.trading import AgentDecisionJournalEntry
 from capm.infra.database.models import get_coinpair_model, get_coverage_model, get_feature_model, get_ohlcv_model
 from capm.infra.database.timescale import TimescaleMarketDataRepository
 
@@ -413,6 +414,136 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
         self.assertEqual(summary.settled_count, 1)
         self.assertAlmostEqual(summary.mape, 1.0 / 103.0)
         self.assertEqual(summary.direction_accuracy, 1.0)
+
+    def test_repository_lists_recent_prediction_journal_entries(self) -> None:
+        for minute in range(3):
+            self.repository.save_prediction_journal_entry(
+                PredictionJournalEntry(
+                    id=None,
+                    created_at=None,
+                    updated_at=None,
+                    symbol="BTCUSDT",
+                    interval="1m",
+                    model_name="xgboost",
+                    artifact_kind="production_tabular",
+                    artifact_path=f"experiments/results/run-{minute}/model.pkl",
+                    artifact_sha256=str(minute) * 64,
+                    reference_time=datetime(2024, 1, 1, 0, minute, tzinfo=UTC),
+                    prediction_time=datetime(2024, 1, 1, 0, minute + 15, tzinfo=UTC),
+                    forecast_horizon=15,
+                    target_field="close",
+                    target_mode="return",
+                    reference_value=100.0,
+                    predicted_value=101.0 + minute,
+                    predicted_return=0.01,
+                    predicted_direction="up",
+                    feature_names=("sma_3_close",),
+                    metadata={},
+                )
+            )
+
+        rows = self.repository.list_recent_prediction_journal_entries("BTCUSDT", "1m", limit=2)
+
+        self.assertEqual([row.reference_time.minute for row in rows], [2, 1])
+
+    def test_repository_persists_and_summarizes_agent_decision_journal(self) -> None:
+        entry = AgentDecisionJournalEntry(
+            cycle_id="2024-01-01T00:00:00+00:00:BTCUSDT:1m:dry_run",
+            mode="dry-run",
+            symbol="BTCUSDT",
+            interval="1m",
+            reference_time=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+            action="buy",
+            requested_usdt_amount=25.0,
+            confidence=0.01,
+            reason="xgboost predicted up above threshold",
+            prediction_journal_ids=(7,),
+            risk_status="approved",
+            execution_status="not_submitted",
+        )
+
+        saved = self.repository.save_agent_decision_journal_entry(entry)
+        duplicate = self.repository.save_agent_decision_journal_entry(entry)
+        summary = self.repository.summarize_agent_decision_journal(
+            "BTCUSDT",
+            "1m",
+            datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+            datetime(2024, 1, 1, 0, 1, tzinfo=UTC),
+        )
+
+        self.assertEqual(saved.id, duplicate.id)
+        self.assertEqual(saved.mode, "dry_run")
+        self.assertEqual(summary.decision_count, 1)
+        self.assertEqual(summary.action_counts["buy"], 1)
+        self.assertEqual(summary.risk_status_counts["approved"], 1)
+        self.assertEqual(summary.execution_status_counts["not_submitted"], 1)
+
+        updated = self.repository.update_agent_decision_execution(
+            int(saved.id),
+            execution_status="filled",
+            exchange_response={"orderId": 123, "status": "FILLED"},
+            exchange_order_id="123",
+            exchange_client_order_id="abc",
+        )
+        self.assertEqual(updated.execution_status, "filled")
+        self.assertEqual(updated.exchange_order_id, "123")
+
+    def test_repository_lists_recent_agent_decision_journal_entries(self) -> None:
+        for minute in range(3):
+            self.repository.save_agent_decision_journal_entry(
+                AgentDecisionJournalEntry(
+                    cycle_id=f"cycle-{minute}",
+                    mode="dry-run",
+                    symbol="BTCUSDT",
+                    interval="1m",
+                    reference_time=datetime(2024, 1, 1, 0, minute, tzinfo=UTC),
+                    action="hold",
+                    risk_status="skipped",
+                    execution_status="not_submitted",
+                )
+            )
+
+        rows = self.repository.list_recent_agent_decision_journal_entries("BTCUSDT", "1m", limit=2)
+
+        self.assertEqual([row.reference_time.minute for row in rows], [2, 1])
+
+    def test_repository_builds_operational_risk_snapshot_from_filled_orders(self) -> None:
+        at = datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
+        for index, (action, quantity, quote) in enumerate((("buy", "1", "100"), ("sell", "0.5", "45"))):
+            saved = self.repository.save_agent_decision_journal_entry(
+                AgentDecisionJournalEntry(
+                    cycle_id=f"cycle-{index}",
+                    mode="spot-demo",
+                    symbol="BTCUSDT",
+                    interval="1m",
+                    reference_time=at,
+                    created_at=at,
+                    action=action,
+                    risk_status="approved",
+                    execution_status="not_submitted",
+                )
+            )
+            self.repository.update_agent_decision_execution(
+                int(saved.id),
+                execution_status="filled",
+                exchange_order_id=str(index + 1),
+                exchange_response={
+                    "reconciliation": {
+                        "side": action.upper(),
+                        "executedQty": quantity,
+                        "cummulativeQuoteQty": quote,
+                    }
+                },
+            )
+
+        snapshot = self.repository.get_operational_risk_snapshot("BTCUSDT", at)
+
+        self.assertEqual(snapshot.orders_today, 2)
+        self.assertEqual(snapshot.realized_pnl_today_usdt, -5)
+        self.assertEqual(snapshot.last_order_at, at)
+        self.assertEqual(snapshot.position_quantity, 0.5)
+        self.assertEqual(snapshot.position_cost_usdt, 50)
+        self.assertEqual(snapshot.average_entry_price, 100)
 
 
 if __name__ == "__main__":

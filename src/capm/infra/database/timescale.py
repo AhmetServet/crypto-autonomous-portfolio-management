@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Iterable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import islice
@@ -32,11 +33,14 @@ from capm.domains.prediction import (
     prediction_direction,
     rmse,
 )
+from capm.domains.trading import AgentDecisionJournalEntry, AgentDecisionJournalSummary, OperationalRiskSnapshot
 from capm.infra.database.models import (
+    agent_decision_journal_to_record,
     build_feature_table_name,
     build_ohlcv_table_name,
     candle_to_record,
     get_coinpair_model,
+    get_agent_decision_journal_model,
     get_coverage_model,
     get_feature_model,
     get_ohlcv_model,
@@ -89,6 +93,7 @@ class TimescaleMarketDataRepository:
         self._feature_coverage_model = get_coverage_model("feature_coverage", self._schema_name)
         self._indicator_coverage_model = get_coverage_model("indicator_coverage", self._schema_name)
         self._prediction_journal_model = get_prediction_journal_model(self._schema_name)
+        self._agent_decision_journal_model = get_agent_decision_journal_model(self._schema_name)
 
     def initialize_schema(self, symbols: Iterable[str] | None = None) -> None:
         """Create metadata plus optional coinpair-scoped market and feature tables."""
@@ -121,6 +126,7 @@ class TimescaleMarketDataRepository:
             self._feature_coverage_model,
             self._indicator_coverage_model,
             self._prediction_journal_model,
+            self._agent_decision_journal_model,
         ):
             self._ensure_static_table(model)
 
@@ -613,6 +619,13 @@ class TimescaleMarketDataRepository:
             latest = session.scalar(stmt)
             return ensure_utc(latest) if latest else None
 
+    def get_available_symbols(self, interval: str) -> tuple[str, ...]:
+        """Return registered symbols that currently have stored candles for an interval."""
+        self._ensure_metadata_tables()
+        with self._session_factory() as session:
+            symbols = tuple(session.scalars(select(self._coinpair_model.symbol).order_by(self._coinpair_model.symbol.asc())).all())
+        return tuple(symbol for symbol in symbols if self.get_latest_candle_time(symbol, interval) is not None)
+
     def get_latest_indicator_time(self, symbol: str, interval: str) -> datetime | None:
         """Read the open_time of the latest stored indicator row for a symbol and interval."""
         model = self._get_existing_feature_model(symbol)
@@ -863,6 +876,61 @@ class TimescaleMarketDataRepository:
             )
             return tuple(row.to_domain() for row in session.scalars(stmt).all())
 
+    def get_latest_prediction_journal_entries(
+        self,
+        symbol: str,
+        interval: str,
+        reference_time: datetime,
+        stale_after: timedelta,
+    ) -> tuple[PredictionJournalEntry, ...]:
+        """Return the newest usable prediction rows grouped by model artifact."""
+        self._ensure_static_table(self._prediction_journal_model)
+        normalized_symbol = normalize_symbol(symbol)
+        normalized_time = ensure_utc(reference_time)
+        with self._session_factory() as session:
+            stmt = (
+                select(self._prediction_journal_model)
+                .where(
+                    self._prediction_journal_model.symbol == normalized_symbol,
+                    self._prediction_journal_model.interval == interval,
+                    self._prediction_journal_model.reference_time <= normalized_time,
+                    self._prediction_journal_model.reference_time >= normalized_time - stale_after,
+                )
+                .order_by(self._prediction_journal_model.reference_time.desc())
+            )
+            rows = [row.to_domain() for row in session.scalars(stmt).all()]
+        newest_by_artifact: dict[tuple[str, str], PredictionJournalEntry] = {}
+        for row in rows:
+            newest_by_artifact.setdefault((row.model_name, row.artifact_sha256), row)
+        return tuple(newest_by_artifact.values())
+
+    def list_recent_prediction_journal_entries(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int = 20,
+    ) -> tuple[PredictionJournalEntry, ...]:
+        """Return recent prediction journal rows for observability."""
+        self._ensure_static_table(self._prediction_journal_model)
+        if limit < 1:
+            raise ValueError("`limit` must be positive.")
+        normalized_symbol = normalize_symbol(symbol)
+        with self._session_factory() as session:
+            stmt = (
+                select(self._prediction_journal_model)
+                .where(
+                    self._prediction_journal_model.symbol == normalized_symbol,
+                    self._prediction_journal_model.interval == interval,
+                )
+                .order_by(
+                    self._prediction_journal_model.reference_time.desc(),
+                    self._prediction_journal_model.created_at.desc(),
+                    self._prediction_journal_model.id.desc(),
+                )
+                .limit(limit)
+            )
+            return tuple(row.to_domain() for row in session.scalars(stmt).all())
+
     def settle_prediction_journal_entry(self, settlement: PredictionJournalSettlement) -> PredictionJournalEntry:
         """Persist actual outcome fields for one journal entry."""
         self._ensure_static_table(self._prediction_journal_model)
@@ -938,6 +1006,193 @@ class TimescaleMarketDataRepository:
             actual_direction_counts=actual_counts,
         )
 
+    def save_agent_decision_journal_entry(self, entry: AgentDecisionJournalEntry) -> AgentDecisionJournalEntry:
+        """Insert or return one idempotent agent decision journal row."""
+        self._ensure_static_table(self._agent_decision_journal_model)
+        now = datetime.now(UTC)
+        payload = agent_decision_journal_to_record(entry)
+        payload["created_at"] = entry.created_at or now
+        payload["updated_at"] = now
+        with self._session_factory() as session:
+            existing_stmt = select(self._agent_decision_journal_model).where(
+                self._agent_decision_journal_model.cycle_id == entry.cycle_id,
+                self._agent_decision_journal_model.symbol == entry.symbol,
+                self._agent_decision_journal_model.interval == entry.interval,
+            )
+            existing = session.scalars(existing_stmt).first()
+            if existing is not None:
+                return existing.to_domain()
+            row = self._agent_decision_journal_model(**payload)
+            session.add(row)
+            try:
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                existing = session.scalars(existing_stmt).first()
+                if existing is None:
+                    raise
+                return existing.to_domain()
+            session.refresh(row)
+            return row.to_domain()
+
+    def update_agent_decision_execution(
+        self,
+        journal_id: int,
+        *,
+        execution_status: str,
+        exchange_response: dict[str, Any],
+        exchange_order_id: str | None = None,
+        exchange_client_order_id: str | None = None,
+    ) -> AgentDecisionJournalEntry:
+        """Persist the exchange result for one journaled decision."""
+        self._ensure_static_table(self._agent_decision_journal_model)
+        with self._session_factory() as session:
+            row = session.get(self._agent_decision_journal_model, journal_id)
+            if row is None:
+                raise ValueError(f"Agent decision journal entry {journal_id} was not found.")
+            row.execution_status = execution_status
+            row.exchange_response = exchange_response
+            row.exchange_order_id = exchange_order_id
+            row.exchange_client_order_id = exchange_client_order_id
+            row.updated_at = datetime.now(UTC)
+            session.commit()
+            session.refresh(row)
+            return row.to_domain()
+
+    def list_recent_agent_decision_journal_entries(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int = 20,
+    ) -> tuple[AgentDecisionJournalEntry, ...]:
+        """Return recent agent decision rows for observability."""
+        self._ensure_static_table(self._agent_decision_journal_model)
+        if limit < 1:
+            raise ValueError("`limit` must be positive.")
+        normalized_symbol = normalize_symbol(symbol)
+        with self._session_factory() as session:
+            stmt = (
+                select(self._agent_decision_journal_model)
+                .where(
+                    self._agent_decision_journal_model.symbol == normalized_symbol,
+                    self._agent_decision_journal_model.interval == interval,
+                )
+                .order_by(
+                    self._agent_decision_journal_model.reference_time.desc(),
+                    self._agent_decision_journal_model.created_at.desc(),
+                    self._agent_decision_journal_model.id.desc(),
+                )
+                .limit(limit)
+            )
+            return tuple(row.to_domain() for row in session.scalars(stmt).all())
+
+    def summarize_agent_decision_journal(
+        self,
+        symbol: str,
+        interval: str,
+        start_time: datetime,
+        end_time: datetime,
+    ) -> AgentDecisionJournalSummary:
+        """Return aggregate decision counts for one time range."""
+        self._ensure_static_table(self._agent_decision_journal_model)
+        normalized_symbol = normalize_symbol(symbol)
+        normalized_start = ensure_utc(start_time)
+        normalized_end = ensure_utc(end_time)
+        with self._session_factory() as session:
+            stmt = select(self._agent_decision_journal_model).where(
+                self._agent_decision_journal_model.symbol == normalized_symbol,
+                self._agent_decision_journal_model.interval == interval,
+                self._agent_decision_journal_model.reference_time >= normalized_start,
+                self._agent_decision_journal_model.reference_time < normalized_end,
+            )
+            rows = [row.to_domain() for row in session.scalars(stmt).all()]
+        return AgentDecisionJournalSummary(
+            symbol=normalized_symbol,
+            interval=interval,
+            start_time=normalized_start,
+            end_time=normalized_end,
+            decision_count=len(rows),
+            action_counts=self._value_counts((row.action for row in rows), ("buy", "sell", "hold")),
+            risk_status_counts=self._value_counts((row.risk_status for row in rows), ("approved", "rejected", "skipped")),
+            execution_status_counts=self._value_counts(
+                (row.execution_status for row in rows),
+                ("not_submitted", "submitted", "filled", "partially_filled", "cancelled", "rejected", "failed"),
+            ),
+            mode_counts=self._value_counts((row.mode for row in rows), ("dry_run", "spot_demo")),
+        )
+
+    def get_operational_risk_snapshot(self, symbol: str, at: datetime) -> OperationalRiskSnapshot:
+        """Build daily execution controls from persisted filled Spot Demo orders."""
+        self._ensure_static_table(self._agent_decision_journal_model)
+        normalized_symbol = normalize_symbol(symbol)
+        normalized_at = ensure_utc(at)
+        day_start = normalized_at.replace(hour=0, minute=0, second=0, microsecond=0)
+        with self._session_factory() as session:
+            stmt = (
+                select(self._agent_decision_journal_model)
+                .where(
+                    self._agent_decision_journal_model.mode == "spot_demo",
+                    self._agent_decision_journal_model.symbol == normalized_symbol,
+                    self._agent_decision_journal_model.exchange_order_id.is_not(None),
+                    self._agent_decision_journal_model.created_at <= normalized_at,
+                )
+                .order_by(self._agent_decision_journal_model.created_at.asc())
+            )
+            rows = session.scalars(stmt).all()
+
+        inventory_quantity = 0.0
+        inventory_cost = 0.0
+        realized_pnl_today = 0.0
+        orders_today = 0
+        last_order_at = None
+        for row in rows:
+            created_at = ensure_utc(row.created_at)
+            order = self._resolved_exchange_order(row.exchange_response)
+            if not order:
+                continue
+            executed_quantity = float(order.get("executedQty", 0) or 0)
+            quote_quantity = float(order.get("cummulativeQuoteQty", 0) or 0)
+            if executed_quantity <= 0 or quote_quantity <= 0:
+                continue
+            if created_at >= day_start:
+                orders_today += 1
+            last_order_at = created_at
+            if str(order.get("side", row.action)).lower() == "buy":
+                inventory_quantity += executed_quantity
+                inventory_cost += quote_quantity
+                continue
+            if inventory_quantity <= 0:
+                continue
+            sold_quantity = min(executed_quantity, inventory_quantity)
+            allocated_cost = inventory_cost * (sold_quantity / inventory_quantity)
+            realized_pnl = (quote_quantity * (sold_quantity / executed_quantity)) - allocated_cost
+            if created_at >= day_start:
+                realized_pnl_today += realized_pnl
+            inventory_quantity -= sold_quantity
+            inventory_cost -= allocated_cost
+
+        return OperationalRiskSnapshot(
+            orders_today=orders_today,
+            realized_pnl_today_usdt=realized_pnl_today,
+            observed_at=normalized_at,
+            last_order_at=last_order_at,
+            position_quantity=inventory_quantity,
+            position_cost_usdt=inventory_cost,
+        )
+
+    @staticmethod
+    def _resolved_exchange_order(exchange_response: dict[str, Any]) -> dict[str, Any]:
+        """Return the newest order payload persisted by execution reconciliation."""
+        if not exchange_response:
+            return {}
+        reconciliation = exchange_response.get("reconciliation")
+        if isinstance(reconciliation, dict):
+            return reconciliation
+        submission = exchange_response.get("submission")
+        if isinstance(submission, dict):
+            return submission
+        return exchange_response
+
     @staticmethod
     def _direction_counts(values: Iterable[str | None]) -> dict[str, int]:
         counts = {"up": 0, "down": 0, "flat": 0}
@@ -945,3 +1200,29 @@ class TimescaleMarketDataRepository:
             if value in counts:
                 counts[value] += 1
         return counts
+
+    @staticmethod
+    def _value_counts(values: Iterable[str], allowed: tuple[str, ...]) -> dict[str, int]:
+        counts = {value: 0 for value in allowed}
+        for value in values:
+            counts[value] = counts.get(value, 0) + 1
+        return counts
+
+    @contextmanager
+    def cycle_lock(self, lock_key: str):
+        """Acquire one PostgreSQL advisory lock for the duration of an agent cycle."""
+        with self._session_factory() as session:
+            acquired = bool(
+                session.scalar(
+                    text("SELECT pg_try_advisory_lock(hashtext(:lock_key))"),
+                    {"lock_key": lock_key},
+                )
+            )
+            try:
+                yield acquired
+            finally:
+                if acquired:
+                    session.execute(
+                        text("SELECT pg_advisory_unlock(hashtext(:lock_key))"),
+                        {"lock_key": lock_key},
+                    )

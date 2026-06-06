@@ -191,3 +191,130 @@ uv run capm prediction-journal summary \
   --start 2026-05-01T00:00:00Z \
   --end 2026-05-30T00:00:00Z
 ```
+
+### Trading-agent dry run
+Run one deterministic, auditable dry-run decision against the latest stored candle and recent prediction-journal rows:
+
+```bash
+uv run capm agent run-once \
+  --symbol BTCUSDT \
+  --interval 1m \
+  --mode dry-run
+```
+
+Dry-run writes to `agent_decision_journal`, applies hard risk checks, and never submits exchange orders. The Spot Demo path uses the same journal and risk gate before optional Demo order execution.
+
+Run one LLM decision call across every symbol that currently has stored candles:
+
+```bash
+uv run capm agent run-once \
+  --interval 1m \
+  --mode dry-run \
+  --policy llm \
+  --show-prompt
+```
+
+Configure an OpenAI-compatible provider through:
+
+```text
+CAPM_LLM_BASE_URL=https://openrouter.ai/api/v1
+CAPM_LLM_API_KEY=<provider API key>
+CAPM_LLM_MODEL=<provider model identifier>
+```
+
+OpenRouter is the default base URL. Change the URL, key, and model to use another compatible chat-completions provider.
+
+The LLM prompt includes current price, the latest five stored candles, persisted indicators, prediction direction and age, simulated portfolio balances, and hard risk limits. The response parser rejects invalid action sizing and confidence values before risk evaluation.
+
+### Binance Spot Demo execution
+Configure Spot Demo API credentials:
+
+```text
+CAPM_BINANCE_MODE=demo
+CAPM_BINANCE_SPOT_REST_BASE_URL=https://demo-api.binance.com
+CAPM_BINANCE_API_KEY=<Spot Demo API key>
+CAPM_BINANCE_API_SECRET=<Spot Demo API secret>
+```
+
+Run one authenticated Spot Demo cycle:
+
+```bash
+uv run capm agent run-once \
+  --interval 1m \
+  --mode spot-demo \
+  --policy llm \
+  --max-trade-usdt 10 \
+  --max-position-usdt 25 \
+  --show-prompt
+```
+
+Spot Demo execution reads balances from Binance, applies the same hard risk gate, and submits only approved market orders. Before submission, the adapter caches Binance symbol filters, validates minimum notional values, and normalizes sell quantities to the allowed market step size. After submission, the agent persists the initial response and reconciles the latest order status. The adapter refuses the live Binance REST host.
+
+Read Spot Demo balances without placing an order:
+
+```bash
+uv run capm spot-demo account --symbol BTCUSDT
+```
+
+Submit one explicit Spot Demo market-buy smoke test:
+
+```bash
+uv run capm spot-demo test-market-buy \
+  --symbol BTCUSDT \
+  --usdt-amount 10 \
+  --confirm
+```
+
+The smoke-test command is separate from the LLM loop and refuses to run without `--confirm`.
+
+Run one closed-candle live pipeline cycle in dry-run mode:
+
+```bash
+uv run capm agent run-live-once \
+  --interval 1m \
+  --mode dry-run \
+  --model-artifact BTCUSDT=experiments/results/<xgboost_run_id>/model.pkl \
+  --model-artifact BTCUSDT=experiments/results/<lstm_run_id>/model.pkl
+```
+
+`run-live-once` acquires a PostgreSQL advisory lock for the candle boundary, fills missing closed candles through REST, recalculates the recent persisted indicator window, settles matured predictions, journals one new prediction per configured model artifact, and runs one batched LLM decision call. Each artifact prediction runs in an isolated worker process so native ML runtimes such as XGBoost and PyTorch do not load conflicting OpenMP libraries into the same process. Repeat `--model-artifact SYMBOL=PATH` for each production model. The default is dry-run; pass `--mode spot-demo` explicitly to allow approved Demo orders.
+
+Run the same pipeline continuously after each closed 1m candle:
+
+```bash
+uv run capm agent run-loop \
+  --interval 1m \
+  --mode dry-run \
+  --max-cycles 3 \
+  --model-artifact BTCUSDT=experiments/results/<xgboost_run_id>/model.pkl \
+  --model-artifact BTCUSDT=experiments/results/<lstm_run_id>/model.pkl
+```
+
+`run-loop` sleeps until shortly after the next candle boundary, calls the same live-cycle service, prints one JSON payload per cycle, and closes clients when it exits. Use `--max-cycles` for smoke tests; omit it for unattended operation. `--stop-after-error-count` and `--sleep-after-error-seconds` bound repeated safe failures without bypassing operational risk controls.
+
+The live cycle stops before prediction and trading when the candle gap exceeds `180` minutes or a model artifact file is older than `3` days. Retrain stale models before production use. For an explicit recovery check, use `--allow-large-gap-recovery` to backfill a longer candle gap and `--allow-stale-models` only when you intentionally want to validate the pipeline with an outdated artifact. Adjust the thresholds with `--max-inline-gap-minutes` and `--max-model-age-days`.
+
+Spot Demo submissions also pass persistent operational controls derived from `agent_decision_journal`: emergency stop, FIFO daily realized-loss limit, maximum orders per day, order cooldown, and priced exposure limit. Defaults are `50` USDT realized loss, `20` orders per day, `5` cooldown minutes, and `100` USDT exposure. Override them with the corresponding `--max-*` flags. Set `CAPM_TRADING_EMERGENCY_STOP=true` to block submissions without changing scheduler arguments.
+
+The first operational snapshot is symbol-scoped: exposure, daily order count, cooldown, and FIFO realized PnL are calculated for the current symbol. FIFO realized PnL uses persisted exchange quote quantities and does not convert fees charged in third-party assets into USDT. Extend these controls to account scope before enabling a multi-coin portfolio.
+
+Show a recent operational report:
+
+```bash
+uv run capm agent report \
+  --symbol BTCUSDT \
+  --interval 1m \
+  --limit 20
+```
+
+The report includes the latest candle and indicator row, current derived position state, recent prediction-journal rows, recent agent decisions, prediction and decision summaries over the last 24 hours, and the current symbol-scoped operational-risk snapshot. Add `--include-prompts` to include stored LLM prompt metadata, and `--include-spot-demo` to read current Spot Demo balances.
+
+Summarize recorded decisions:
+
+```bash
+uv run capm agent journal summary \
+  --symbol BTCUSDT \
+  --interval 1m \
+  --start 2026-05-01T00:00:00Z \
+  --end 2026-05-30T00:00:00Z
+```

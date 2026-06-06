@@ -3,7 +3,7 @@
 ## 1. Purpose
 This document describes the low-level design for a prediction journal in `src/capm`.
 
-The prediction journal is the durable audit log for model outputs. It records each runtime prediction, then later settles that prediction when the target candle is available. This gives the project a live-quality feedback loop before and during Binance demo/testnet trading.
+The prediction journal is the durable audit log for model outputs. It records each runtime prediction, then later settles that prediction when the target candle is available. This gives the project a live-quality feedback loop before and during Binance Spot Demo Mode trading.
 
 This document complements:
 - `docs/lld/prediction_models/lld.md`
@@ -17,7 +17,7 @@ The current prediction runtime can load saved artifacts and print a normalized J
 Current gaps:
 - runtime predictions are lost unless manually copied or redirected
 - offline backtests do not measure day-by-day live prediction behavior
-- the future AI/testnet agent needs historical model signals to explain why it bought, sold, or held
+- the future AI/Spot Demo agent needs historical model signals to explain why it bought, sold, or held
 - there is no simple way to compare predicted return against the actual future return after the horizon passes
 - there is no database-backed source for recent model quality, drift, or calibration analysis
 
@@ -47,7 +47,7 @@ The design is shaped by:
 - the existing DB-first architecture
 - the current normalized `RuntimePrediction` output
 - the need to evaluate predictions after the horizon candle closes
-- future testnet trading, where model signals and agent decisions must be auditable
+- future Spot Demo trading, where model signals and agent decisions must be auditable
 - the requirement to avoid duplicate prediction rows when commands are retried
 - the need to support multiple model types with one common journal shape
 
@@ -362,8 +362,8 @@ When journaling is enabled, `capm predict` should emit the existing normalized p
 }
 ```
 
-## 14. Agent/Testnet Relevance
-The prediction journal is the model-signal layer for the future demo/testnet trading system.
+## 14. Agent/Spot Demo Relevance
+The prediction journal is the model-signal layer for the future Spot Demo trading system.
 
 Expected later flow:
 
@@ -442,7 +442,7 @@ Current implementation status:
 - Done: update README with the command set.
 
 ## 18. Open Decisions
-- Should `capm predict` journal by default once the testnet scheduler exists?
+- Should `capm predict` journal by default once the Spot Demo scheduler exists?
 - Should the unique key use artifact SHA256 only, or artifact path plus SHA256?
 - Should we store a compact feature snapshot for model explainability?
 - Should settlement use exact `prediction_time` candle open only, or tolerate missing target candle by using the next available candle?

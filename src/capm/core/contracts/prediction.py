@@ -76,6 +76,14 @@ class PredictionJournalRepositoryPort(Protocol):
     ) -> tuple[PredictionJournalEntry, ...]:
         """Return unsettled entries whose target prediction time has passed."""
 
+    def list_recent_prediction_journal_entries(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int = 20,
+    ) -> tuple[PredictionJournalEntry, ...]:
+        """Return recent prediction journal rows for observability."""
+
     def settle_prediction_journal_entry(self, settlement: PredictionJournalSettlement) -> PredictionJournalEntry:
         """Persist actual outcome fields for one journal entry."""
 

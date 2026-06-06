@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from decimal import Decimal
 
 from capm.domains.features import FeatureRow
@@ -31,6 +32,26 @@ def _extract_target_value(row: OHLCV | FeatureRow, target_field: str) -> float:
     return _to_float(raw_value)
 
 
+def _interval_delta(interval: str) -> timedelta:
+    if interval != "1m":
+        raise DatasetAdaptationError("Statistical gap-tolerant training currently supports only 1m intervals.")
+    return timedelta(minutes=1)
+
+
+def _contiguous_suffix(rows: tuple[OHLCV, ...], *, interval: str) -> tuple[OHLCV, ...]:
+    if len(rows) < 2:
+        return rows
+    delta = _interval_delta(interval)
+    start_index = len(rows) - 1
+    while start_index > 0:
+        previous = rows[start_index - 1]
+        current = rows[start_index]
+        if current.open_time - previous.open_time != delta:
+            break
+        start_index -= 1
+    return rows[start_index:]
+
+
 @dataclass(frozen=True, slots=True)
 class StatisticalDatasetAdapter:
     """Shapes candle-backed datasets into univariate model inputs."""
@@ -44,7 +65,10 @@ class StatisticalDatasetAdapter:
         if target_index >= len(dataset.rows):
             raise DatasetAdaptationError("Reference index exceeds the available forecast horizon.")
 
-        training_rows = dataset.rows[reference_index - dataset.window_size : reference_index]
+        training_rows = tuple(dataset.rows[reference_index - dataset.window_size : reference_index])
+        training_rows = _contiguous_suffix(training_rows, interval=dataset.interval)
+        if len(training_rows) < 2:
+            raise DatasetAdaptationError("Statistical models need at least two contiguous training rows.")
         reference_row = dataset.rows[reference_index]
         target_row = dataset.rows[target_index]
         training_input = StatisticalTrainingInput(

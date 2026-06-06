@@ -14,6 +14,7 @@ from capm.domains.features import ComputedIndicatorSet
 from capm.domains.market_data import CoverageRange
 from capm.domains.market_data.entities import OHLCV, ensure_utc, normalize_symbol
 from capm.domains.prediction import PredictionJournalEntry, prediction_direction
+from capm.domains.trading import AgentDecisionJournalEntry
 
 
 class Base(DeclarativeBase):
@@ -76,6 +77,7 @@ _FEATURE_MODEL_CACHE: dict[tuple[str | None, str], type[Base]] = {}
 _COINPAIR_MODEL_CACHE: dict[str | None, type[Base]] = {}
 _COVERAGE_MODEL_CACHE: dict[tuple[str | None, str], type[Base]] = {}
 _PREDICTION_JOURNAL_MODEL_CACHE: dict[str | None, type[Base]] = {}
+_AGENT_DECISION_JOURNAL_MODEL_CACHE: dict[str | None, type[Base]] = {}
 
 
 def build_ohlcv_table_name(coinpair_id: int) -> str:
@@ -208,6 +210,44 @@ class PredictionJournalModelMixin:
         return cls(**prediction_journal_to_record(entity))
 
 
+class AgentDecisionJournalModelMixin:
+    """Shared behavior for the agent decision journal table."""
+
+    def to_domain(self) -> AgentDecisionJournalEntry:
+        """Convert a journal row into a domain entity."""
+        return AgentDecisionJournalEntry(
+            id=self.id,
+            created_at=ensure_utc(self.created_at),
+            updated_at=ensure_utc(self.updated_at),
+            cycle_id=self.cycle_id,
+            mode=self.mode,
+            symbol=self.symbol,
+            interval=self.interval,
+            reference_time=ensure_utc(self.reference_time),
+            action=self.action,
+            requested_quantity=self.requested_quantity,
+            requested_usdt_amount=self.requested_usdt_amount,
+            confidence=self.confidence,
+            reason=self.reason or "",
+            prediction_journal_ids=tuple(self.prediction_journal_ids or []),
+            prediction_snapshot=dict(self.prediction_snapshot or {}),
+            market_snapshot=dict(self.market_snapshot or {}),
+            portfolio_snapshot=dict(self.portfolio_snapshot or {}),
+            risk_status=self.risk_status,
+            risk_violations=tuple(self.risk_violations or []),
+            execution_status=self.execution_status,
+            exchange_order_id=self.exchange_order_id,
+            exchange_client_order_id=self.exchange_client_order_id,
+            exchange_response=dict(self.exchange_response or {}),
+            metadata=dict(self.extra_metadata or {}),
+        )
+
+    @classmethod
+    def from_domain(cls, entity: AgentDecisionJournalEntry) -> Any:
+        """Convert a journal domain entity into a SQLAlchemy model."""
+        return cls(**agent_decision_journal_to_record(entity))
+
+
 class CoverageModelMixin:
     """Shared behavior for coverage metadata models."""
 
@@ -318,6 +358,33 @@ def prediction_journal_to_record(entity: PredictionJournalEntry) -> dict[str, ob
     }
 
 
+def agent_decision_journal_to_record(entity: AgentDecisionJournalEntry) -> dict[str, object]:
+    """Convert an agent decision journal entry into a database record payload."""
+    return {
+        "cycle_id": entity.cycle_id,
+        "mode": entity.mode,
+        "symbol": entity.symbol,
+        "interval": entity.interval,
+        "reference_time": entity.reference_time,
+        "action": entity.action,
+        "requested_quantity": entity.requested_quantity,
+        "requested_usdt_amount": entity.requested_usdt_amount,
+        "confidence": entity.confidence,
+        "reason": entity.reason,
+        "prediction_journal_ids": list(entity.prediction_journal_ids),
+        "prediction_snapshot": entity.prediction_snapshot,
+        "market_snapshot": entity.market_snapshot,
+        "portfolio_snapshot": entity.portfolio_snapshot,
+        "risk_status": entity.risk_status,
+        "risk_violations": list(entity.risk_violations),
+        "execution_status": entity.execution_status,
+        "exchange_order_id": entity.exchange_order_id,
+        "exchange_client_order_id": entity.exchange_client_order_id,
+        "exchange_response": entity.exchange_response,
+        "extra_metadata": entity.metadata,
+    }
+
+
 def get_prediction_journal_model(schema_name: str | None = None) -> type[Base]:
     """Return the static ORM model for prediction journal rows."""
     cached_model = _PREDICTION_JOURNAL_MODEL_CACHE.get(schema_name)
@@ -405,6 +472,78 @@ def get_prediction_journal_model(schema_name: str | None = None) -> type[Base]:
         type("PredictionJournalModel", (PredictionJournalModelMixin, Base), attributes),
     )
     _PREDICTION_JOURNAL_MODEL_CACHE[schema_name] = model
+    return model
+
+
+def get_agent_decision_journal_model(schema_name: str | None = None) -> type[Base]:
+    """Return the static ORM model for agent decision journal rows."""
+    cached_model = _AGENT_DECISION_JOURNAL_MODEL_CACHE.get(schema_name)
+    if cached_model is not None:
+        return cached_model
+
+    table_args: tuple[Any, ...] = (
+        UniqueConstraint("cycle_id", "symbol", "interval", name="uq_agent_decision_journal_cycle_symbol"),
+    )
+    if schema_name:
+        table_args = (*table_args, {"schema": schema_name})
+    annotations = {
+        "id": Mapped[int],
+        "created_at": Mapped[datetime],
+        "updated_at": Mapped[datetime],
+        "cycle_id": Mapped[str],
+        "mode": Mapped[str],
+        "symbol": Mapped[str],
+        "interval": Mapped[str],
+        "reference_time": Mapped[datetime],
+        "action": Mapped[str],
+        "requested_quantity": Mapped[float | None],
+        "requested_usdt_amount": Mapped[float | None],
+        "confidence": Mapped[float | None],
+        "reason": Mapped[str],
+        "prediction_journal_ids": Mapped[list[int]],
+        "prediction_snapshot": Mapped[dict[str, object]],
+        "market_snapshot": Mapped[dict[str, object]],
+        "portfolio_snapshot": Mapped[dict[str, object]],
+        "risk_status": Mapped[str],
+        "risk_violations": Mapped[list[dict[str, object]]],
+        "execution_status": Mapped[str],
+        "exchange_order_id": Mapped[str | None],
+        "exchange_client_order_id": Mapped[str | None],
+        "exchange_response": Mapped[dict[str, object]],
+        "extra_metadata": Mapped[dict[str, object]],
+    }
+    attributes: dict[str, Any] = {
+        "__tablename__": "agent_decision_journal",
+        "__module__": __name__,
+        "__table_args__": table_args,
+        "__annotations__": annotations,
+        "id": mapped_column(Integer, primary_key=True, autoincrement=True),
+        "created_at": mapped_column(DateTime(timezone=True), nullable=False),
+        "updated_at": mapped_column(DateTime(timezone=True), nullable=False),
+        "cycle_id": mapped_column(String(128), nullable=False, index=True),
+        "mode": mapped_column(String(16), nullable=False, index=True),
+        "symbol": mapped_column(String(64), nullable=False, index=True),
+        "interval": mapped_column(String(5), nullable=False, index=True),
+        "reference_time": mapped_column(DateTime(timezone=True), nullable=False, index=True),
+        "action": mapped_column(String(8), nullable=False, index=True),
+        "requested_quantity": mapped_column(Float, nullable=True),
+        "requested_usdt_amount": mapped_column(Float, nullable=True),
+        "confidence": mapped_column(Float, nullable=True),
+        "reason": mapped_column(String(1024), nullable=False, default=""),
+        "prediction_journal_ids": mapped_column(JSON, nullable=False, default=list),
+        "prediction_snapshot": mapped_column(JSON, nullable=False, default=dict),
+        "market_snapshot": mapped_column(JSON, nullable=False, default=dict),
+        "portfolio_snapshot": mapped_column(JSON, nullable=False, default=dict),
+        "risk_status": mapped_column(String(16), nullable=False, index=True),
+        "risk_violations": mapped_column(JSON, nullable=False, default=list),
+        "execution_status": mapped_column(String(24), nullable=False, index=True),
+        "exchange_order_id": mapped_column(String(128), nullable=True),
+        "exchange_client_order_id": mapped_column(String(128), nullable=True),
+        "exchange_response": mapped_column(JSON, nullable=False, default=dict),
+        "extra_metadata": mapped_column(JSON, nullable=False, default=dict),
+    }
+    model = cast(type[Base], type("AgentDecisionJournalModel", (AgentDecisionJournalModelMixin, Base), attributes))
+    _AGENT_DECISION_JOURNAL_MODEL_CACHE[schema_name] = model
     return model
 
 

@@ -10,6 +10,11 @@ from .features import (
 from .ingestion import HistoricalMarketDataIngestionService
 from .prediction_journal import PredictionJournalService, artifact_sha256
 from .prediction_runtime import PredictionRuntimeService, RuntimePrediction
+from .decision_policy import ThresholdDecisionPolicy
+from .risk_control import RiskControlService
+from .trading_agent import TradingAgentService
+from .llm_decision_policy import LLMDecisionBatch, LLMDecisionPolicy
+from .live_cycle import LiveCycleResult, LiveTradingCycleService, default_live_indicator_specs
 from .training import (
     DeepLearningProductionTrainer,
     DeepLearningTrainingResult,
@@ -33,15 +38,23 @@ __all__ = [
     "DeepLearningTrainingResult",
     "FeatureScaler",
     "LocalArtifactStore",
+    "LLMDecisionBatch",
+    "LLMDecisionPolicy",
+    "LiveCycleResult",
+    "LiveTradingCycleService",
     "PredictionSignalStrategy",
     "PredictionDatasetLoader",
     "PredictionJournalService",
     "PredictionRuntimeService",
     "RuntimePrediction",
+    "RiskControlService",
     "StatisticalDatasetAdapter",
     "TabularDatasetAdapter",
+    "ThresholdDecisionPolicy",
+    "TradingAgentService",
     "WalkForwardExperimentRunner",
     "build_signal_map",
+    "default_live_indicator_specs",
     "artifact_sha256",
     "infer_feature_names",
 ]

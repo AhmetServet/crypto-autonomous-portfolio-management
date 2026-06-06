@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from capm.domains.features import ComputedIndicatorSet, FeatureRow
@@ -14,11 +14,12 @@ from capm.services.training import StatisticalDatasetAdapter, TabularDatasetAdap
 
 def make_candle(minute: int, *, close: str) -> OHLCV:
     """Create a predictable OHLCV row for adapter tests."""
+    open_time = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC) + timedelta(minutes=minute)
     return OHLCV(
         symbol="BTCUSDT",
         interval="1m",
-        open_time=datetime(2024, 1, 1, 0, minute, 0, tzinfo=UTC),
-        close_time=datetime(2024, 1, 1, 0, minute, 59, tzinfo=UTC),
+        open_time=open_time,
+        close_time=open_time + timedelta(seconds=59),
         open=Decimal(close),
         high=Decimal(close),
         low=Decimal(close),
@@ -67,6 +68,37 @@ class PredictionAdapterTests(unittest.TestCase):
         self.assertEqual(prepared.reference_value, 4.0)
         self.assertEqual(prepared.actual_value, 5.0)
         self.assertEqual(prepared.training_input.target_values, (1.0, 2.0, 3.0))
+
+    def test_statistical_adapter_uses_contiguous_suffix_when_training_window_has_gap(self) -> None:
+        dataset = ForecastDataset(
+            symbol="BTCUSDT",
+            interval="1m",
+            rows=(
+                make_candle(0, close="1"),
+                make_candle(1, close="2"),
+                make_candle(5, close="6"),
+                make_candle(6, close="7"),
+                make_candle(7, close="8"),
+                make_candle(8, close="9"),
+            ),
+            target_field="close",
+            feature_names=(),
+            window_size=4,
+            forecast_horizon=1,
+        )
+
+        prepared = StatisticalDatasetAdapter().prepare_step(dataset, 4)
+
+        self.assertEqual(prepared.reference_value, 8.0)
+        self.assertEqual(prepared.actual_value, 9.0)
+        self.assertEqual(prepared.training_input.target_values, (6.0, 7.0))
+        self.assertEqual(
+            tuple(timestamp.isoformat() for timestamp in prepared.training_input.timestamps),
+            (
+                "2024-01-01T00:05:00+00:00",
+                "2024-01-01T00:06:00+00:00",
+            ),
+        )
 
     def test_tabular_adapter_shapes_feature_matrix_and_future_targets(self) -> None:
         dataset = ForecastDataset(
