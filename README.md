@@ -325,6 +325,18 @@ The dashboard API exposes:
 - `GET /api/positions?symbol=BTCUSDT&interval=1m`
 - `GET /api/risk/status?symbol=BTCUSDT`
 - `GET /api/llm/prompts/<journal_id>`
+- `GET /api/spot-demo/portfolio?symbol=BTCUSDT`
+- `POST /api/agent/run-live-once`
+- `POST /api/spot-demo/market-buy`
+- `POST /api/spot-demo/market-sell`
+
+Manual Spot Demo order endpoints require `confirm: true` in the JSON body. Example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/spot-demo/market-buy \
+  -H 'Content-Type: application/json' \
+  -d '{"symbol":"BTCUSDT","usdt_amount":10,"confirm":true}'
+```
 
 Summarize recorded decisions:
 
