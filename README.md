@@ -109,7 +109,7 @@ These components are designed to read stored candles and feature rows through th
 Example configs live under `experiments/configs/`. After you have ingested OHLCV into the database (and, for `xgboost` / `lightgbm`, persisted the matching feature columns), run:
 
 ```bash
-uv run capm-experiment-walkforward --config experiments/configs/walk_forward_arima.example.json
+uv run capm-experiment-walkforward --config experiments/configs/recent_arima_btcusdt_1m_15m.json
 ```
 
 Use `--env-file .env` if your database URL is not already in the environment. Set `"init_schema": true` in the JSON once if you need to create coinpair tables for the symbol before loading data. The CLI now prints progress logs to stderr while preserving the final JSON summary on stdout; pass `--quiet` to suppress those logs.
@@ -117,16 +117,10 @@ Use `--env-file .env` if your database URL is not already in the environment. Se
 Metrics and run artifacts are written under `experiments/results/<run_id>/` (gitignored except `.gitkeep`) as a small consolidated set of files: `request.json`, `split_predictions.json`, `split_reports.json`, `trained_models.pkl`, and `summary.json`. `trained_models.pkl` stores the latest fitted model from each walk-forward split. Enable `"backtest": { "enabled": true, ... }` only after installing the `backtest` extra; it merges all walk-forward split predictions and runs one offline simulation over the same candle window.
 
 ### Production-style training and prediction
-Production-style tabular training writes a deployable `model.pkl` artifact plus a `summary.json`:
+Production-style tabular training writes deployable `model.pkl` artifacts plus `summary.json` files. The full tabular preset compares XGBoost and LightGBM from one config:
 
 ```bash
-uv run capm-train-production --config experiments/configs/train_xgboost_production.example.json
-```
-
-Compare XGBoost and LightGBM from one config:
-
-```bash
-uv run capm-train-production --config experiments/configs/compare_tabular_production.example.json
+uv run capm-train-production --config experiments/configs/full_tabular_compare_btcusdt_1m_15m.json
 ```
 
 Run one prediction from a saved production model or a walk-forward `trained_models.pkl` artifact:
@@ -149,17 +143,11 @@ uv sync --extra deep-learning
 Train one LSTM or GRU production artifact:
 
 ```bash
-uv run capm-train-deep-learning --config experiments/configs/train_lstm_production.example.json
-uv run capm-train-deep-learning --config experiments/configs/train_gru_production.example.json
+uv run capm-train-deep-learning --config experiments/configs/full_lstm_btcusdt_1m_15m.json
+uv run capm-train-deep-learning --config experiments/configs/full_gru_btcusdt_1m_15m.json
 ```
 
 The deep-learning CLI prints progress logs to stderr for long runs while preserving the final JSON summary on stdout. Use `--quiet` when only the JSON output is needed.
-
-Compare both recurrent models from one config:
-
-```bash
-uv run capm-train-deep-learning --config experiments/configs/compare_deep_learning.example.json
-```
 
 The deep-learning trainer reads ready feature rows from the database, builds causal sequence windows, fits the feature scaler on the train split only, writes `model.pkl` and `summary.json`, and runs the same holdout Backtrader evaluation path as production tabular models. Saved artifacts use `artifact_kind = "deep_learning_sequence"` and can be passed to `uv run capm predict` with the same command shown above.
 

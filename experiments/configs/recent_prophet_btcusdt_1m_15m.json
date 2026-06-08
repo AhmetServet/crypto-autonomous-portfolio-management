@@ -1,16 +1,15 @@
 {
-  "description": "Current recent ARIMA walk-forward baseline with backtest.",
+  "description": "Recent BTCUSDT 1m Prophet walk-forward baseline with backtest. Kept recent because Prophet is slow on minute-level full-history fitting.",
   "init_schema": false,
   "symbol": "BTCUSDT",
   "interval": "1m",
-  "model_name": "arima",
+  "model_name": "prophet",
   "model_parameters": {
-    "order": [
-      1,
-      0,
-      0
-    ],
-    "fit_kwargs": {}
+    "daily_seasonality": true,
+    "weekly_seasonality": false,
+    "yearly_seasonality": false,
+    "changepoint_prior_scale": 0.02,
+    "seasonality_prior_scale": 5.0
   },
   "target_field": "close",
   "window_size": 720,
@@ -24,6 +23,6 @@
   "backtest": {
     "enabled": true,
     "starting_cash": 10000,
-    "buy_threshold": 0.001
+    "buy_threshold": 0.0002
   }
 }

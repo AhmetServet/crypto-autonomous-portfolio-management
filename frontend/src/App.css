@@ -272,6 +272,11 @@ tbody tr:hover {
 .actions {
   width: 40px;
   text-align: right;
+  white-space: nowrap;
+}
+
+.actions .icon-button {
+  margin-left: 4px;
 }
 
 .badge {
@@ -326,6 +331,22 @@ tbody tr:hover {
   display: grid;
   gap: 8px;
   padding: 12px;
+}
+
+.registry-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  border-bottom: 1px solid #d5d5d5;
+  padding: 12px;
+}
+
+.registry-toolbar label {
+  display: grid;
+  gap: 5px;
+  color: #555;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .artifact-selector-head {

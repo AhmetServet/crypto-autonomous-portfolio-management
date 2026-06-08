@@ -99,9 +99,8 @@ src/capm/
 
 experiments/
 ├─ configs/
-│  ├─ train_lstm_production.example.json
-│  ├─ train_gru_production.example.json
-│  └─ compare_deep_learning.example.json
+│  ├─ full_lstm_btcusdt_1m_15m.json
+│  └─ full_gru_btcusdt_1m_15m.json
 └─ results/
 ```
 
@@ -393,12 +392,12 @@ Failure behavior:
 ## 14. CLI And Config Design
 Recommended training CLI:
 ```bash
-uv run capm-train-deep-learning --config experiments/configs/train_lstm_production.example.json
+uv run capm-train-deep-learning --config experiments/configs/full_lstm_btcusdt_1m_15m.json
 ```
 
-Comparison CLI:
+GRU training CLI:
 ```bash
-uv run capm-train-deep-learning --config experiments/configs/compare_deep_learning.example.json
+uv run capm-train-deep-learning --config experiments/configs/full_gru_btcusdt_1m_15m.json
 ```
 
 Config shape:

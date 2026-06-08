@@ -279,6 +279,83 @@ class DashboardApiTests(unittest.TestCase):
         self.assertIn(str(artifact), {item["artifact_path"] for item in body["latest_by_model"]})
         self.assertIn(str(walk_forward_artifact), {item["artifact_path"] for item in body["latest_by_model"]})
 
+    def test_model_artifact_state_route_marks_artifact_inactive(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "model_registry.json"
+            with patch("capm.api.app.MODEL_REGISTRY_STATE_PATH", state_path):
+                response = self.client.post(
+                    "/api/model-artifacts/state",
+                    json={"artifact_path": "experiments/results/run/model.pkl", "active": False, "archived": True},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["state"]["active"])
+        self.assertTrue(response.json()["state"]["archived"])
+
+    def test_training_presets_route_discovers_config_types(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            configs_dir = Path(temp_dir)
+            (configs_dir / "walk_forward_arima_current.json").write_text(
+                """
+                {
+                  "symbol": "BTCUSDT",
+                  "interval": "1m",
+                  "model_name": "arima",
+                  "start_time": "2026-06-01T00:00:00Z",
+                  "end_time": "2026-06-02T00:00:00Z"
+                }
+                """,
+                encoding="utf-8",
+            )
+            (configs_dir / "train_lstm_current.json").write_text(
+                """
+                {
+                  "symbol": "BTCUSDT",
+                  "interval": "1m",
+                  "model_name": "lstm",
+                  "start_time": "2026-06-01T00:00:00Z",
+                  "split_time": "2026-06-01T12:00:00Z",
+                  "end_time": "2026-06-02T00:00:00Z"
+                }
+                """,
+                encoding="utf-8",
+            )
+
+            with patch("capm.api.app.TRAINING_CONFIGS_DIR", configs_dir):
+                response = self.client.get("/api/training/presets")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            {item["training_type"] for item in response.json()["presets"]},
+            {"statistical", "deep_learning"},
+        )
+
+    def test_training_jobs_route_returns_current_jobs(self) -> None:
+        with patch.dict(
+            "capm.api.app._TRAINING_JOBS",
+            {
+                "job-1": {
+                    "id": "job-1",
+                    "name": "BTCUSDT-xgboost",
+                    "training_type": "tabular",
+                    "status": "succeeded",
+                    "created_at": "2026-06-08T00:00:00+00:00",
+                    "started_at": "2026-06-08T00:00:01+00:00",
+                    "finished_at": "2026-06-08T00:00:02+00:00",
+                    "return_code": 0,
+                    "pid": 123,
+                    "config_path": "experiments/results/dashboard_jobs/job-1/config.json",
+                    "log_path": "experiments/results/dashboard_jobs/job-1/training.log",
+                    "command": ["python", "-m", "capm.experiments.train_production"],
+                }
+            },
+            clear=True,
+        ):
+            response = self.client.get("/api/training/jobs")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["jobs"][0]["id"], "job-1")
+
     def test_database_init_route_initializes_symbols(self) -> None:
         with patch("capm.api.app.initialize_database", return_value=FakeRepository()) as initialize:
             response = self.client.post("/api/database/init", json={"symbols": ["BTCUSDT"]})

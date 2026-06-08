@@ -247,6 +247,7 @@ export type ModelArtifact = {
   symbol: string
   interval: string
   model_name: string
+  model_type: string
   artifact_kind: string
   artifact_path: string
   summary_path: string
@@ -257,6 +258,10 @@ export type ModelArtifact = {
   rmse: number | null
   cumulative_return: number | null
   trade_count: number | null
+  active: boolean
+  archived: boolean
+  notes: string | null
+  stale: boolean
 }
 
 export type ModelArtifactsResponse = {
@@ -340,6 +345,63 @@ export type BackfillIndicatorsRequest = {
   end: string
   chunk_candle_count: number
   resume_from_latest: boolean
+}
+
+export type ModelArtifactStateRequest = {
+  artifact_path: string
+  active?: boolean | null
+  archived?: boolean | null
+  notes?: string | null
+}
+
+export type TrainingType = 'tabular' | 'deep_learning' | 'statistical'
+
+export type TrainingPreset = {
+  name: string
+  path: string
+  training_type: TrainingType
+  symbol: string | null
+  interval: string | null
+  model_name: string | null
+  description: string | null
+  config: Record<string, unknown>
+}
+
+export type TrainingPresetsResponse = {
+  status: string
+  presets: TrainingPreset[]
+}
+
+export type TrainingJob = {
+  id: string
+  name: string
+  training_type: TrainingType
+  status: string
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  return_code: number | null
+  pid: number | null
+  config_path: string
+  log_path: string
+  command: string[]
+  log?: string
+}
+
+export type TrainingJobsResponse = {
+  status: string
+  jobs: TrainingJob[]
+}
+
+export type TrainingJobResponse = {
+  status: string
+  job: TrainingJob
+}
+
+export type TrainingJobRequest = {
+  training_type: TrainingType
+  name?: string | null
+  config: Record<string, unknown>
 }
 
 export type PredictRequest = {
@@ -437,6 +499,38 @@ export function getModelArtifacts(params: { symbol: string; interval: string; li
     limit: String(params.limit ?? 100),
   })
   return fetchJson<ModelArtifactsResponse>(`/api/model-artifacts?${query.toString()}`)
+}
+
+export function updateModelArtifactState(request: ModelArtifactStateRequest) {
+  return fetchJson<unknown>('/api/model-artifacts/state', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function getTrainingPresets() {
+  return fetchJson<TrainingPresetsResponse>('/api/training/presets')
+}
+
+export function getTrainingJobs() {
+  return fetchJson<TrainingJobsResponse>('/api/training/jobs')
+}
+
+export function getTrainingJob(jobId: string) {
+  return fetchJson<TrainingJobResponse>(`/api/training/jobs/${jobId}`)
+}
+
+export function createTrainingJob(request: TrainingJobRequest) {
+  return fetchJson<TrainingJobResponse>('/api/training/jobs', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function cancelTrainingJob(jobId: string) {
+  return fetchJson<TrainingJobResponse>(`/api/training/jobs/${jobId}/cancel`, {
+    method: 'POST',
+  })
 }
 
 export function submitSpotDemoMarketBuy(request: ManualBuyRequest) {

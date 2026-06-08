@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
+import signal
+import subprocess
+import sys
+import threading
 from types import SimpleNamespace
-from typing import Annotated
+from typing import Annotated, Any
+from uuid import uuid4
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Query
@@ -55,6 +61,12 @@ def get_spot_demo_adapter() -> BinanceSpotDemoTradingAdapter:
 DashboardServiceDependency = Annotated[DashboardReportService, Depends(get_dashboard_service)]
 SpotDemoAdapterDependency = Annotated[BinanceSpotDemoTradingAdapter, Depends(get_spot_demo_adapter)]
 MODEL_RESULTS_DIR = Path("experiments/results")
+TRAINING_CONFIGS_DIR = Path("experiments/configs")
+TRAINING_JOBS_DIR = MODEL_RESULTS_DIR / "dashboard_jobs"
+MODEL_REGISTRY_STATE_PATH = MODEL_RESULTS_DIR / "model_registry.json"
+_TRAINING_JOBS: dict[str, dict[str, Any]] = {}
+_TRAINING_JOBS_LOCK = threading.RLock()
+_TRAINING_PROCESSES: dict[str, subprocess.Popen[str]] = {}
 
 
 def _risk_args_from_request(request: AgentRunOnceRequest | LiveCycleRunOnceRequest) -> SimpleNamespace:
@@ -94,6 +106,49 @@ def _coverage_range_payload(item) -> dict[str, object]:
     }
 
 
+def _read_model_registry_state() -> dict[str, Any]:
+    if not MODEL_REGISTRY_STATE_PATH.exists():
+        return {"artifacts": {}}
+    try:
+        payload = json.loads(MODEL_REGISTRY_STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"artifacts": {}}
+    if not isinstance(payload, dict):
+        return {"artifacts": {}}
+    artifacts = payload.get("artifacts")
+    if not isinstance(artifacts, dict):
+        payload["artifacts"] = {}
+    return payload
+
+
+def _write_model_registry_state(payload: dict[str, Any]) -> None:
+    MODEL_REGISTRY_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    MODEL_REGISTRY_STATE_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _model_type_from_name(model_name: str | None) -> str:
+    normalized = (model_name or "").lower()
+    if normalized in {"xgboost", "lightgbm"}:
+        return "tabular"
+    if normalized in {"lstm", "gru"}:
+        return "deep_learning"
+    if normalized in {"arima", "prophet"}:
+        return "statistical"
+    return "unknown"
+
+
+def _load_summary_metrics(summary: dict[str, Any]) -> dict[str, Any]:
+    metrics = summary.get("metrics") if isinstance(summary.get("metrics"), dict) else {}
+    if not metrics:
+        metrics = summary.get("aggregate_metrics") if isinstance(summary.get("aggregate_metrics"), dict) else {}
+    aggregate = summary.get("aggregate") if isinstance(summary.get("aggregate"), dict) else {}
+    return {
+        "direction_accuracy": metrics.get("direction_accuracy", aggregate.get("direction_accuracy")),
+        "mape": metrics.get("mape", aggregate.get("mape")),
+        "rmse": metrics.get("rmse", aggregate.get("rmse")),
+    }
+
+
 def _discover_model_artifacts(
     *,
     symbol: str | None = None,
@@ -103,6 +158,8 @@ def _discover_model_artifacts(
 ) -> dict[str, object]:
     """Return trained model artifacts from local experiment results."""
     results_dir = results_dir or MODEL_RESULTS_DIR
+    registry_state = _read_model_registry_state()
+    registry_artifacts = registry_state.get("artifacts") if isinstance(registry_state.get("artifacts"), dict) else {}
     artifacts: list[dict[str, object]] = []
     if not results_dir.exists():
         return {"status": "ok", "results_dir": str(results_dir), "artifacts": [], "latest_by_model": []}
@@ -115,9 +172,7 @@ def _discover_model_artifacts(
         except (OSError, json.JSONDecodeError):
             continue
         request = summary.get("request") if isinstance(summary.get("request"), dict) else {}
-        metrics = summary.get("metrics") if isinstance(summary.get("metrics"), dict) else {}
-        if not metrics:
-            metrics = summary.get("aggregate_metrics") if isinstance(summary.get("aggregate_metrics"), dict) else {}
+        metrics = _load_summary_metrics(summary)
         backtest = summary.get("backtest") if isinstance(summary.get("backtest"), dict) else {}
 
         artifact_path = Path(str(summary.get("model_artifact_path") or summary_path.parent / "model.pkl"))
@@ -131,6 +186,10 @@ def _discover_model_artifacts(
         if not artifact_path.is_file():
             continue
 
+        artifact_key = str(artifact_path)
+        artifact_state = registry_artifacts.get(artifact_key) if isinstance(registry_artifacts, dict) else None
+        if not isinstance(artifact_state, dict):
+            artifact_state = {}
         artifact_symbol = str(summary.get("symbol") or request.get("symbol") or "").upper()
         artifact_interval = str(summary.get("interval") or request.get("interval") or "")
         if normalized_symbol and artifact_symbol != normalized_symbol:
@@ -139,28 +198,36 @@ def _discover_model_artifacts(
             continue
 
         stat = artifact_path.stat()
+        trained_through = summary.get("end_time") or request.get("end_time")
         artifacts.append(
             {
                 "run_id": summary.get("run_id") or summary_path.parent.name,
                 "symbol": artifact_symbol,
                 "interval": artifact_interval,
                 "model_name": summary.get("model_name") or request.get("model_name"),
+                "model_type": _model_type_from_name(str(summary.get("model_name") or request.get("model_name") or "")),
                 "artifact_kind": artifact_kind,
-                "artifact_path": str(artifact_path),
+                "artifact_path": artifact_key,
                 "summary_path": str(summary_path),
-                "trained_through": summary.get("end_time") or request.get("end_time"),
+                "trained_through": trained_through,
                 "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
                 "direction_accuracy": metrics.get("direction_accuracy"),
                 "mape": metrics.get("mape"),
                 "rmse": metrics.get("rmse"),
                 "cumulative_return": backtest.get("cumulative_return"),
                 "trade_count": backtest.get("trade_count"),
+                "active": bool(artifact_state.get("active", True)),
+                "archived": bool(artifact_state.get("archived", False)),
+                "notes": artifact_state.get("notes"),
+                "stale": _artifact_is_stale(trained_through, max_age_days=3),
             }
         )
 
     artifacts.sort(key=lambda item: str(item["modified_at"]), reverse=True)
     latest_by_model: dict[str, dict[str, object]] = {}
     for artifact in artifacts:
+        if artifact.get("archived") or not artifact.get("active"):
+            continue
         model_name = str(artifact.get("model_name") or artifact["run_id"])
         latest_by_model.setdefault(model_name, artifact)
     return {
@@ -169,6 +236,102 @@ def _discover_model_artifacts(
         "artifacts": artifacts[:limit],
         "latest_by_model": list(latest_by_model.values()),
     }
+
+
+def _artifact_is_stale(value: object, *, max_age_days: int) -> bool:
+    if not value:
+        return True
+    try:
+        trained_at = parse_datetime(str(value))
+    except ValueError:
+        return True
+    return (datetime.now(UTC) - trained_at).total_seconds() > max_age_days * 86_400
+
+
+def _training_type_from_config(path: Path, payload: dict[str, Any]) -> str:
+    name = path.name.lower()
+    model_name = str(payload.get("model_name") or "").lower()
+    models = payload.get("models")
+    if "deep" in name or model_name in {"lstm", "gru"}:
+        return "deep_learning"
+    if "walk_forward" in name or model_name in {"arima", "prophet"}:
+        return "statistical"
+    if isinstance(models, list):
+        model_names = {str(item.get("model_name", "")).lower() for item in models if isinstance(item, dict)}
+        if model_names & {"lstm", "gru"}:
+            return "deep_learning"
+        if model_names & {"arima", "prophet"}:
+            return "statistical"
+    return "tabular"
+
+
+def _training_command(training_type: str, config_path: Path) -> list[str]:
+    module_by_type = {
+        "tabular": "capm.experiments.train_production",
+        "deep_learning": "capm.experiments.train_deep_learning",
+        "statistical": "capm.experiments.walk_forward",
+    }
+    module = module_by_type.get(training_type)
+    if module is None:
+        raise ValueError("Training type must be tabular, deep_learning, or statistical.")
+    return [sys.executable, "-m", module, "--config", str(config_path)]
+
+
+def _append_job_log(log_path: Path, message: str) -> None:
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(message)
+        if not message.endswith("\n"):
+            handle.write("\n")
+
+
+def _run_training_job(job_id: str) -> None:
+    with _TRAINING_JOBS_LOCK:
+        job = _TRAINING_JOBS[job_id]
+        command = list(job["command"])
+        log_path = Path(str(job["log_path"]))
+        job["status"] = "running"
+        job["started_at"] = datetime.now(UTC).isoformat()
+    _append_job_log(log_path, f"[dashboard] starting training job {job_id}: {' '.join(command)}")
+    process = subprocess.Popen(
+        command,
+        cwd=Path.cwd(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        start_new_session=True,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
+    with _TRAINING_JOBS_LOCK:
+        _TRAINING_PROCESSES[job_id] = process
+        _TRAINING_JOBS[job_id]["pid"] = process.pid
+    try:
+        assert process.stdout is not None
+        for line in process.stdout:
+            _append_job_log(log_path, line)
+        return_code = process.wait()
+    finally:
+        with _TRAINING_JOBS_LOCK:
+            _TRAINING_PROCESSES.pop(job_id, None)
+    finished_at = datetime.now(UTC).isoformat()
+    with _TRAINING_JOBS_LOCK:
+        job = _TRAINING_JOBS[job_id]
+        if job.get("status") == "cancel_requested":
+            job["status"] = "cancelled"
+        else:
+            job["status"] = "succeeded" if return_code == 0 else "failed"
+        job["return_code"] = return_code
+        job["finished_at"] = finished_at
+    _append_job_log(log_path, f"[dashboard] finished training job {job_id} return_code={return_code}")
+
+
+def _training_job_payload(job: dict[str, Any], *, include_log: bool = False) -> dict[str, Any]:
+    payload = {key: value for key, value in job.items() if key not in {"command"}}
+    payload["command"] = list(job["command"])
+    if include_log:
+        log_path = Path(str(job["log_path"]))
+        payload["log"] = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+    return payload
 
 
 class SpotDemoMarketBuyRequest(BaseModel):
@@ -259,6 +422,23 @@ class BackfillIndicatorsRequest(BaseModel):
     resume_from_latest: bool = True
 
 
+class ModelArtifactStateRequest(BaseModel):
+    """Update dashboard registry state for a local model artifact."""
+
+    artifact_path: str = Field(min_length=1)
+    active: bool | None = None
+    archived: bool | None = None
+    notes: str | None = None
+
+
+class TrainingJobRequest(BaseModel):
+    """Start a dashboard-managed model training job."""
+
+    training_type: str = Field(pattern="^(tabular|deep_learning|statistical)$")
+    config: dict[str, Any] = Field(default_factory=dict)
+    name: str | None = None
+
+
 class PredictRequest(BaseModel):
     """Run one persisted model artifact against DB-backed data."""
 
@@ -338,6 +518,111 @@ def create_app() -> FastAPI:
         limit: int = Query(default=100, ge=1, le=500),
     ) -> object:
         return jsonable_encoder(_discover_model_artifacts(symbol=symbol, interval=interval, limit=limit))
+
+    @app.post("/api/model-artifacts/state")
+    def update_model_artifact_state(request: ModelArtifactStateRequest) -> object:
+        state = _read_model_registry_state()
+        artifacts = state.setdefault("artifacts", {})
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+            state["artifacts"] = artifacts
+        item = artifacts.setdefault(request.artifact_path, {})
+        if not isinstance(item, dict):
+            item = {}
+            artifacts[request.artifact_path] = item
+        if request.active is not None:
+            item["active"] = request.active
+        if request.archived is not None:
+            item["archived"] = request.archived
+        if request.notes is not None:
+            item["notes"] = request.notes
+        item["updated_at"] = datetime.now(UTC).isoformat()
+        _write_model_registry_state(state)
+        return jsonable_encoder({"status": "ok", "artifact_path": request.artifact_path, "state": item})
+
+    @app.get("/api/training/presets")
+    def training_presets() -> object:
+        presets = []
+        for config_path in sorted(TRAINING_CONFIGS_DIR.glob("**/*.json")):
+            try:
+                payload = json.loads(config_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            presets.append(
+                {
+                    "name": config_path.stem,
+                    "path": str(config_path),
+                    "training_type": _training_type_from_config(config_path, payload),
+                    "symbol": payload.get("symbol"),
+                    "interval": payload.get("interval"),
+                    "model_name": payload.get("model_name"),
+                    "description": payload.get("description"),
+                    "config": payload,
+                }
+            )
+        return jsonable_encoder({"status": "ok", "presets": presets})
+
+    @app.get("/api/training/jobs")
+    def training_jobs() -> object:
+        with _TRAINING_JOBS_LOCK:
+            jobs = [_training_job_payload(job) for job in _TRAINING_JOBS.values()]
+        jobs.sort(key=lambda item: str(item["created_at"]), reverse=True)
+        return jsonable_encoder({"status": "ok", "jobs": jobs})
+
+    @app.get("/api/training/jobs/{job_id}")
+    def training_job(job_id: str) -> object:
+        with _TRAINING_JOBS_LOCK:
+            job = _TRAINING_JOBS.get(job_id)
+            if job is None:
+                raise HTTPException(status_code=404, detail=f"Training job {job_id} was not found.")
+            payload = _training_job_payload(job, include_log=True)
+        return jsonable_encoder({"status": "ok", "job": payload})
+
+    @app.post("/api/training/jobs")
+    def create_training_job(request: TrainingJobRequest) -> object:
+        if not request.config:
+            raise HTTPException(status_code=400, detail="Training config is required.")
+        job_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "_" + uuid4().hex[:8]
+        job_dir = TRAINING_JOBS_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+        config_path = job_dir / "config.json"
+        log_path = job_dir / "training.log"
+        config_path.write_text(json.dumps(request.config, indent=2), encoding="utf-8")
+        command = _training_command(request.training_type, config_path)
+        job = {
+            "id": job_id,
+            "name": request.name or f"{request.training_type}-{job_id}",
+            "training_type": request.training_type,
+            "status": "queued",
+            "created_at": datetime.now(UTC).isoformat(),
+            "started_at": None,
+            "finished_at": None,
+            "return_code": None,
+            "pid": None,
+            "config_path": str(config_path),
+            "log_path": str(log_path),
+            "command": command,
+        }
+        with _TRAINING_JOBS_LOCK:
+            _TRAINING_JOBS[job_id] = job
+        thread = threading.Thread(target=_run_training_job, args=(job_id,), daemon=True)
+        thread.start()
+        return jsonable_encoder({"status": "ok", "job": _training_job_payload(job)})
+
+    @app.post("/api/training/jobs/{job_id}/cancel")
+    def cancel_training_job(job_id: str) -> object:
+        with _TRAINING_JOBS_LOCK:
+            job = _TRAINING_JOBS.get(job_id)
+            process = _TRAINING_PROCESSES.get(job_id)
+            if job is None:
+                raise HTTPException(status_code=404, detail=f"Training job {job_id} was not found.")
+            if process is None or process.poll() is not None:
+                return jsonable_encoder({"status": "ok", "job": _training_job_payload(job)})
+            job["status"] = "cancel_requested"
+        os.killpg(process.pid, signal.SIGTERM)
+        return jsonable_encoder({"status": "ok", "job": _training_job_payload(job)})
 
     @app.post("/api/database/init")
     def init_database(request: InitDatabaseRequest) -> object:

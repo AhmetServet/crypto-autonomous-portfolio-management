@@ -1,4 +1,5 @@
 {
+  "description": "Full BTCUSDT 1m LSTM training for a deployable 15-minute return artifact. Uses all ready DB features and automatic CUDA/MPS/CPU device selection.",
   "symbol": "BTCUSDT",
   "interval": "1m",
   "model_name": "lstm",
@@ -10,21 +11,22 @@
   "target_field": "close",
   "target_mode": "return",
   "scaler": "zscore",
+  "required_features": [],
   "artifacts_dir": "experiments/results",
   "model_parameters": {
-    "hidden_size": 96,
+    "hidden_size": 64,
     "num_layers": 2,
-    "dropout": 0.1,
+    "dropout": 0.15,
     "learning_rate": 0.0007,
-    "batch_size": 512,
-    "max_epochs": 15,
-    "weight_decay": 1e-05,
+    "batch_size": 1024,
+    "max_epochs": 12,
+    "weight_decay": 0.00001,
     "seed": 42,
     "device": "auto"
   },
   "backtest": {
     "starting_cash": 10000.0,
-    "buy_threshold": 0.001,
+    "buy_threshold": 0.0002,
     "commission_rate": 0.001,
     "cash_fraction": 0.95
   }

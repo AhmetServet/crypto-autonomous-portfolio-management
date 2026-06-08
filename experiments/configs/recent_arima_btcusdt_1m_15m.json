@@ -1,13 +1,12 @@
 {
-  "description": "Current recent PROPHET walk-forward baseline with backtest.",
+  "description": "Recent BTCUSDT 1m ARIMA walk-forward baseline with backtest. Statistical models are univariate here and use close prices, not feature columns.",
   "init_schema": false,
   "symbol": "BTCUSDT",
   "interval": "1m",
-  "model_name": "prophet",
+  "model_name": "arima",
   "model_parameters": {
-    "daily_seasonality": true,
-    "weekly_seasonality": false,
-    "yearly_seasonality": false
+    "order": [1, 0, 0],
+    "fit_kwargs": {}
   },
   "target_field": "close",
   "window_size": 720,
@@ -21,6 +20,6 @@
   "backtest": {
     "enabled": true,
     "starting_cash": 10000,
-    "buy_threshold": 0.001
+    "buy_threshold": 0.0002
   }
 }
