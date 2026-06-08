@@ -18,7 +18,9 @@ import {
 import './App.css'
 import {
   type AgentRunOnceRequest,
+  type BackfillIndicatorsRequest,
   type DashboardSummary,
+  type DataCoverageResponse,
   type DecisionRow,
   type FetchOhlcvRequest,
   type HealthResponse,
@@ -28,8 +30,11 @@ import {
   type ModelArtifact,
   type PredictRequest,
   type PredictionRow,
+  type RepairOhlcvGapsRequest,
   type SettlePredictionsRequest,
+  backfillIndicators,
   fetchOhlcv,
+  getDataCoverage,
   getDashboardSummary,
   getHealth,
   getModelArtifacts,
@@ -38,6 +43,7 @@ import {
   getSymbols,
   ingestOhlcv,
   initDatabase,
+  repairOhlcvGaps,
   runAgentOnce,
   runLiveCycleOnce,
   runPrediction,
@@ -175,6 +181,31 @@ function MutationResult({ title, data, error }: { title: string; data?: unknown;
     <div className="result-block">
       <h3>{title}</h3>
       <pre>{error ? error.message : JSON.stringify(data, null, 2)}</pre>
+    </div>
+  )
+}
+
+function CoverageResult({ data }: { data?: DataCoverageResponse }) {
+  if (!data) return null
+  const rows = [
+    ['OHLCV', data.ohlcv.covered_ranges.length, data.ohlcv.missing_ranges.length],
+    ['Indicators', data.indicators.covered_ranges.length, data.indicators.missing_ranges.length],
+    ['Features', data.features.covered_ranges.length, data.features.missing_ranges.length],
+  ] as const
+  return (
+    <div className="coverage-block">
+      {rows.map(([label, covered, missing]) => (
+        <div key={label}>
+          <span>{label}</span>
+          <strong>{covered} covered / {missing} gaps</strong>
+        </div>
+      ))}
+      {data.ohlcv.missing_ranges.length ? (
+        <div className="coverage-detail">
+          <span>First OHLCV Gap</span>
+          <strong>{`${formatTime(data.ohlcv.missing_ranges[0].start)} -> ${formatTime(data.ohlcv.missing_ranges[0].end)}`}</strong>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -495,6 +526,8 @@ function DatabaseMarketControls({
   const [persistFetch, setPersistFetch] = useState(false)
   const [ingestSource, setIngestSource] = useState<'rest' | 'dump' | 'dump-with-rest-tail'>('dump-with-rest-tail')
   const [batchSize, setBatchSize] = useState(50000)
+  const [indicatorChunkSize, setIndicatorChunkSize] = useState(10000)
+  const [resumeIndicators, setResumeIndicators] = useState(true)
 
   const initMutation = useMutation({
     mutationFn: () => initDatabase({ symbols: symbolsText.split(',').map((item) => item.trim()).filter(Boolean) }),
@@ -527,6 +560,37 @@ function DatabaseMarketControls({
         batch_size: batchSize,
       }
       return ingestOhlcv(payload)
+    },
+    onSuccess: onCompleted,
+  })
+  const coverageMutation = useMutation({
+    mutationFn: () => getDataCoverage({ symbol: marketSymbol, interval: marketInterval, start, end }),
+  })
+  const repairMutation = useMutation({
+    mutationFn: () => {
+      const payload: RepairOhlcvGapsRequest = {
+        symbol: marketSymbol,
+        interval: marketInterval,
+        start,
+        end,
+        mode: marketMode,
+        batch_size: batchSize,
+      }
+      return repairOhlcvGaps(payload)
+    },
+    onSuccess: onCompleted,
+  })
+  const indicatorBackfillMutation = useMutation({
+    mutationFn: () => {
+      const payload: BackfillIndicatorsRequest = {
+        symbol: marketSymbol,
+        interval: marketInterval,
+        start,
+        end,
+        chunk_candle_count: indicatorChunkSize,
+        resume_from_latest: resumeIndicators,
+      }
+      return backfillIndicators(payload)
     },
     onSuccess: onCompleted,
   })
@@ -569,10 +633,31 @@ function DatabaseMarketControls({
           </label>
           <button type="submit" disabled={ingestMutation.isPending}>Ingest</button>
         </form>
+
+        <form className="control-form" onSubmit={(event) => { event.preventDefault(); coverageMutation.mutate() }}>
+          <h3>Coverage</h3>
+          <button type="submit" disabled={coverageMutation.isPending}>Inspect Coverage</button>
+        </form>
+
+        <form className="control-form" onSubmit={(event) => { event.preventDefault(); repairMutation.mutate() }}>
+          <h3>Repair Gaps</h3>
+          <button type="submit" disabled={repairMutation.isPending}>Repair Missing OHLCV</button>
+        </form>
+
+        <form className="control-form" onSubmit={(event) => { event.preventDefault(); indicatorBackfillMutation.mutate() }}>
+          <h3>Backfill Indicators</h3>
+          <label>Chunk Size<input type="number" min="1" value={indicatorChunkSize} onChange={(event) => setIndicatorChunkSize(Number(event.target.value))} /></label>
+          <label className="check-row"><input type="checkbox" checked={resumeIndicators} onChange={(event) => setResumeIndicators(event.target.checked)} />Resume from latest</label>
+          <button type="submit" disabled={indicatorBackfillMutation.isPending}>Compute Indicators</button>
+        </form>
       </div>
+      <CoverageResult data={coverageMutation.data} />
       <MutationResult title="Init Result" data={initMutation.data} error={initMutation.error} />
       <MutationResult title="Fetch Result" data={fetchMutation.data} error={fetchMutation.error} />
       <MutationResult title="Ingest Result" data={ingestMutation.data} error={ingestMutation.error} />
+      <MutationResult title="Coverage Error" error={coverageMutation.error} />
+      <MutationResult title="Repair Result" data={repairMutation.data} error={repairMutation.error} />
+      <MutationResult title="Indicator Backfill Result" data={indicatorBackfillMutation.data} error={indicatorBackfillMutation.error} />
     </Panel>
   )
 }
@@ -900,6 +985,18 @@ function App() {
         <div className="error-banner">
           <AlertTriangle size={18} />
           <span>{summaryQuery.error.message}</span>
+        </div>
+      ) : null}
+      {summary && (
+        (summary.market.latest_candle_age_seconds ?? 0) > 180 ||
+        !summary.market.indicator_ready ||
+        (summary.market.latest_indicator_age_seconds ?? 0) > 180
+      ) ? (
+        <div className="error-banner">
+          <AlertTriangle size={18} />
+          <span>
+            {`Data freshness warning: candle age ${formatAge(summary.market.latest_candle_age_seconds)}, indicator age ${formatAge(summary.market.latest_indicator_age_seconds)}, indicator ready ${summary.market.indicator_ready ? 'yes' : 'no'}.`}
+          </span>
         </div>
       ) : null}
 

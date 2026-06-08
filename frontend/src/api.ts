@@ -290,6 +290,58 @@ export type IngestOhlcvRequest = {
   batch_size: number
 }
 
+export type DataRange = {
+  start: string
+  end: string
+}
+
+export type CoverageRange = {
+  coinpair_id: number
+  table_name: string
+  symbol: string
+  interval: string
+  start: string
+  end: string
+}
+
+export type DataCoverageResponse = {
+  status: string
+  symbol: string
+  interval: string
+  start: string
+  end: string
+  ohlcv: {
+    covered_ranges: CoverageRange[]
+    missing_ranges: DataRange[]
+  }
+  indicators: {
+    covered_ranges: CoverageRange[]
+    missing_ranges: DataRange[]
+  }
+  features: {
+    covered_ranges: CoverageRange[]
+    missing_ranges: DataRange[]
+  }
+}
+
+export type RepairOhlcvGapsRequest = {
+  symbol: string
+  interval: string
+  start: string
+  end: string
+  mode: 'demo' | 'live'
+  batch_size: number
+}
+
+export type BackfillIndicatorsRequest = {
+  symbol: string
+  interval: string
+  start: string
+  end: string
+  chunk_candle_count: number
+  resume_from_latest: boolean
+}
+
 export type PredictRequest = {
   model_artifact: string
   symbol: string
@@ -424,6 +476,30 @@ export function fetchOhlcv(request: FetchOhlcvRequest) {
 
 export function ingestOhlcv(request: IngestOhlcvRequest) {
   return fetchJson<unknown>('/api/market/ingest-ohlcv', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function getDataCoverage(params: { symbol: string; interval: string; start: string; end: string }) {
+  const query = new URLSearchParams({
+    symbol: params.symbol,
+    interval: params.interval,
+    start: params.start,
+    end: params.end,
+  })
+  return fetchJson<DataCoverageResponse>(`/api/data/coverage?${query.toString()}`)
+}
+
+export function repairOhlcvGaps(request: RepairOhlcvGapsRequest) {
+  return fetchJson<unknown>('/api/market/repair-ohlcv-gaps', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function backfillIndicators(request: BackfillIndicatorsRequest) {
+  return fetchJson<unknown>('/api/features/backfill-indicators', {
     method: 'POST',
     body: JSON.stringify(request),
   })

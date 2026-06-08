@@ -32,7 +32,9 @@ from capm.main import (
 )
 from capm.services.dashboard import DashboardReportRequest, DashboardReportService
 from capm.services.ingestion import BinancePublicDumpIngestionService, HistoricalMarketDataIngestionService
+from capm.services.features import IndicatorPipelineService
 from capm.services.llm_decision_policy import LLMDecisionPolicy
+from capm.services.live_cycle import default_live_indicator_specs
 from capm.core.config import LLMSettings
 from capm.services.prediction_journal import PredictionJournalService
 from capm.services.prediction_runtime import PredictionRuntimeService
@@ -72,6 +74,24 @@ def _risk_args_from_request(request: AgentRunOnceRequest | LiveCycleRunOnceReque
 def datetime_now_minus_interval(interval: str) -> datetime:
     """Return the default settlement cutoff used by the CLI."""
     return datetime.now(UTC) - interval_to_timedelta(interval)
+
+
+def _time_range_payload(item) -> dict[str, object]:
+    return {
+        "start": item.start_time,
+        "end": item.end_time,
+    }
+
+
+def _coverage_range_payload(item) -> dict[str, object]:
+    return {
+        "coinpair_id": item.coinpair_id,
+        "table_name": item.table_name,
+        "symbol": item.symbol,
+        "interval": item.interval,
+        "start": item.start_open_time,
+        "end": item.end_open_time,
+    }
 
 
 def _discover_model_artifacts(
@@ -215,6 +235,28 @@ class IngestOHLCVRequest(BaseModel):
     source: str = Field(default="dump-with-rest-tail", pattern="^(rest|dump|dump-with-rest-tail)$")
     mode: str = Field(default="live", pattern="^(demo|live)$")
     batch_size: int = Field(default=50_000, ge=1)
+
+
+class RepairOHLCVGapsRequest(BaseModel):
+    """Repair missing OHLCV coverage gaps inside a requested range."""
+
+    symbol: str = Field(min_length=1)
+    interval: str = Field(default="1m", min_length=1)
+    start: str = Field(min_length=1)
+    end: str = Field(min_length=1)
+    mode: str = Field(default="demo", pattern="^(demo|live)$")
+    batch_size: int = Field(default=50_000, ge=1)
+
+
+class BackfillIndicatorsRequest(BaseModel):
+    """Compute and persist indicator rows for stored candles."""
+
+    symbol: str = Field(min_length=1)
+    interval: str = Field(default="1m", min_length=1)
+    start: str = Field(min_length=1)
+    end: str = Field(min_length=1)
+    chunk_candle_count: int = Field(default=10_000, ge=1)
+    resume_from_latest: bool = True
 
 
 class PredictRequest(BaseModel):
@@ -411,6 +453,116 @@ def create_app() -> FastAPI:
             service.close()
             if rest_adapter is not None:
                 rest_adapter.close()
+
+    @app.get("/api/data/coverage")
+    def data_coverage(
+        symbol: str = Query(min_length=1),
+        interval: str = Query(default="1m", min_length=1),
+        start: str = Query(min_length=1),
+        end: str = Query(min_length=1),
+    ) -> object:
+        repository = build_repository()
+        start_time = parse_datetime(start)
+        end_time = parse_datetime(end)
+        interval_delta = interval_to_timedelta(interval)
+        ohlcv_plan = repository.plan_candle_fetch(symbol, interval, start_time, end_time)
+        indicator_ranges = repository._load_coverage_ranges("indicator", symbol, interval, start_time, end_time)
+        feature_ranges = repository._load_coverage_ranges("feature", symbol, interval, start_time, end_time)
+        indicator_missing = repository._build_missing_ranges(indicator_ranges, interval_delta, start_time, end_time)
+        feature_missing = repository._build_missing_ranges(feature_ranges, interval_delta, start_time, end_time)
+        return jsonable_encoder(
+            {
+                "status": "ok",
+                "symbol": symbol.upper(),
+                "interval": interval,
+                "start": start_time,
+                "end": end_time,
+                "ohlcv": {
+                    "covered_ranges": [_coverage_range_payload(item) for item in ohlcv_plan.covered_ranges],
+                    "missing_ranges": [_time_range_payload(item) for item in ohlcv_plan.missing_ranges],
+                },
+                "indicators": {
+                    "covered_ranges": [_coverage_range_payload(item) for item in indicator_ranges],
+                    "missing_ranges": [_time_range_payload(item) for item in indicator_missing],
+                },
+                "features": {
+                    "covered_ranges": [_coverage_range_payload(item) for item in feature_ranges],
+                    "missing_ranges": [_time_range_payload(item) for item in feature_missing],
+                },
+            }
+        )
+
+    @app.post("/api/market/repair-ohlcv-gaps")
+    def repair_ohlcv_gaps(request: RepairOHLCVGapsRequest) -> object:
+        repository = initialize_database([request.symbol])
+        start_time = parse_datetime(request.start)
+        end_time = parse_datetime(request.end)
+        plan = repository.plan_candle_fetch(request.symbol, request.interval, start_time, end_time)
+        if not plan.missing_ranges:
+            return jsonable_encoder({"status": "ok", "repaired_ranges": 0, "fetched_count": 0, "stored_count": 0})
+
+        adapter = BinanceSpotMarketDataAdapter(settings=BinanceSettings.from_env(mode=request.mode))
+        service = HistoricalMarketDataIngestionService(
+            market_data_port=adapter,
+            repository_port=repository,
+            persist_batch_candle_count=request.batch_size,
+        )
+        fetched_count = 0
+        stored_count = 0
+        try:
+            for gap in plan.missing_ranges:
+                result = service.ingest_ohlcv(
+                    HistoricalOHLCRequest(
+                        symbol=request.symbol,
+                        interval=request.interval,
+                        start_at=gap.start_time,
+                        end_at=gap.end_time,
+                    )
+                )
+                fetched_count += result.fetched_count
+                stored_count += result.stored_count
+            return jsonable_encoder(
+                {
+                    "status": "ok",
+                    "repaired_ranges": len(plan.missing_ranges),
+                    "fetched_count": fetched_count,
+                    "stored_count": stored_count,
+                    "latest": repository.get_latest_candle_time(request.symbol, request.interval),
+                }
+            )
+        finally:
+            adapter.close()
+
+    @app.post("/api/features/backfill-indicators")
+    def backfill_indicators(request: BackfillIndicatorsRequest) -> object:
+        repository = build_repository()
+        service = IndicatorPipelineService(
+            market_data_repository=repository,
+            feature_repository=repository,
+            feature_window_reader=repository,
+        )
+        result = service.backfill_feature_range(
+            symbol=request.symbol,
+            interval=request.interval,
+            start_time=parse_datetime(request.start),
+            end_time=parse_datetime(request.end),
+            indicator_specs=default_live_indicator_specs(),
+            chunk_candle_count=request.chunk_candle_count,
+            resume_from_latest=request.resume_from_latest,
+        )
+        return jsonable_encoder(
+            {
+                "status": "ok",
+                "requested_start_time": result.requested_start_time,
+                "effective_start_time": result.effective_start_time,
+                "end_time": result.end_time,
+                "resumed_from": result.resumed_from,
+                "chunks_processed": result.chunks_processed,
+                "candles_read": result.candles_read,
+                "indicator_rows_persisted": result.indicator_rows_persisted,
+                "last_persisted_open_time": result.last_persisted_open_time,
+            }
+        )
 
     @app.post("/api/predict")
     def predict(request: PredictRequest) -> object:

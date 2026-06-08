@@ -66,6 +66,27 @@ class FakeRepository:
     def summarize_agent_decision_journal(self, **kwargs):
         return SimpleNamespace(to_dict=lambda: {"decision_count": 0, **kwargs})
 
+    def plan_candle_fetch(self, symbol, interval, start_time, end_time):
+        return SimpleNamespace(
+            covered_ranges=(
+                SimpleNamespace(
+                    coinpair_id=1,
+                    table_name="coinpair_1_ohlcv",
+                    symbol=symbol,
+                    interval=interval,
+                    start_open_time=start_time,
+                    end_open_time=start_time,
+                ),
+            ),
+            missing_ranges=(SimpleNamespace(start_time=start_time, end_time=end_time),),
+        )
+
+    def _load_coverage_ranges(self, kind, symbol, interval, start_time, end_time):
+        return ()
+
+    def _build_missing_ranges(self, coverage_ranges, interval_delta, start_time, end_time):
+        return (SimpleNamespace(start_time=start_time, end_time=end_time),)
+
 
 class FakeSpotDemoAdapter:
     """Route-test double for Spot Demo account and order calls."""
@@ -288,6 +309,48 @@ class DashboardApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["summary"]["decision_count"], 0)
+
+    def test_data_coverage_route_returns_coverage_and_gaps(self) -> None:
+        with patch("capm.api.app.build_repository", return_value=FakeRepository()):
+            response = self.client.get(
+                "/api/data/coverage"
+                "?symbol=BTCUSDT&interval=1m&start=2026-06-01T00:00:00Z&end=2026-06-01T00:10:00Z"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(len(body["ohlcv"]["covered_ranges"]), 1)
+        self.assertEqual(len(body["ohlcv"]["missing_ranges"]), 1)
+
+    def test_backfill_indicators_route_returns_summary(self) -> None:
+        result = SimpleNamespace(
+            requested_start_time=datetime(2026, 6, 1, tzinfo=UTC),
+            effective_start_time=datetime(2026, 6, 1, tzinfo=UTC),
+            end_time=datetime(2026, 6, 2, tzinfo=UTC),
+            resumed_from=None,
+            chunks_processed=2,
+            candles_read=100,
+            indicator_rows_persisted=100,
+            last_persisted_open_time=datetime(2026, 6, 1, 1, tzinfo=UTC),
+        )
+        fake_service = SimpleNamespace(backfill_feature_range=lambda **kwargs: result)
+        with (
+            patch("capm.api.app.build_repository", return_value=FakeRepository()),
+            patch("capm.api.app.IndicatorPipelineService", return_value=fake_service),
+        ):
+            response = self.client.post(
+                "/api/features/backfill-indicators",
+                json={
+                    "symbol": "BTCUSDT",
+                    "interval": "1m",
+                    "start": "2026-06-01T00:00:00Z",
+                    "end": "2026-06-02T00:00:00Z",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["indicator_rows_persisted"], 100)
 
 
 if __name__ == "__main__":
