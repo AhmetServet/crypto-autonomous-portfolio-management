@@ -121,13 +121,193 @@ export type PromptResponse = {
   raw_response: unknown
 }
 
-async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`)
+export type HealthResponse = {
+  status: string
+  database: string
+  available_symbols_1m?: string[]
+  error?: string
+}
+
+export type Portfolio = {
+  available_usdt: number
+  base_asset_free: number
+  base_asset_locked: number
+}
+
+export type PortfolioResponse = {
+  status: string
+  symbol: string
+  portfolio: Portfolio
+}
+
+export type ManualBuyRequest = {
+  symbol: string
+  usdt_amount: number
+  confirm: boolean
+}
+
+export type ManualSellRequest = {
+  symbol: string
+  quantity: number
+  confirm: boolean
+}
+
+export type ManualOrderResponse = {
+  status: string
+  symbol: string
+  usdt_amount?: number
+  quantity?: number
+  portfolio_before: Portfolio
+  order: Record<string, unknown>
+  portfolio_after: Portfolio
+}
+
+export type LiveCycleRequest = {
+  interval: string
+  mode: 'dry-run' | 'spot-demo'
+  model_artifacts: string[]
+  market_data_mode: 'demo' | 'live'
+  max_inline_gap_minutes: number
+  max_model_age_days: number
+  allow_large_gap_recovery: boolean
+  allow_stale_models: boolean
+  max_trade_usdt: number
+  max_position_usdt: number
+  emergency_stop: boolean
+  max_daily_realized_loss_usdt: number
+  max_orders_per_day: number
+  order_cooldown_minutes: number
+  max_total_exposure_usdt: number
+}
+
+export type LiveCycleResponse = {
+  status: string
+  cycle_time: string
+  symbols: string[]
+  ingested_candles: number
+  persisted_indicators: number
+  predictions_journaled: number
+  predictions_settled: number
+  skipped_reason: string | null
+  decisions: Array<{
+    cycle_id: string
+    mode: string
+    symbol: string
+    interval: string
+    action: string
+    risk_status: string
+    execution_status: string
+    journal_id: number
+  }>
+}
+
+export type ModelArtifact = {
+  run_id: string
+  symbol: string
+  interval: string
+  model_name: string
+  artifact_kind: string
+  artifact_path: string
+  summary_path: string
+  trained_through: string | null
+  modified_at: string
+  direction_accuracy: number | null
+  mape: number | null
+  rmse: number | null
+  cumulative_return: number | null
+  trade_count: number | null
+}
+
+export type ModelArtifactsResponse = {
+  status: string
+  results_dir: string
+  artifacts: ModelArtifact[]
+  latest_by_model: ModelArtifact[]
+}
+
+export type InitDatabaseRequest = {
+  symbols: string[]
+}
+
+export type FetchOhlcvRequest = {
+  symbol: string
+  interval: string
+  start: string
+  end: string
+  mode: 'demo' | 'live'
+  persist: boolean
+  batch_size: number
+}
+
+export type IngestOhlcvRequest = {
+  symbol: string
+  interval: string
+  start: string
+  end: string
+  source: 'rest' | 'dump' | 'dump-with-rest-tail'
+  mode: 'demo' | 'live'
+  batch_size: number
+}
+
+export type PredictRequest = {
+  model_artifact: string
+  symbol: string
+  interval: string
+  at: string | null
+  journal: boolean
+}
+
+export type SettlePredictionsRequest = {
+  symbol: string
+  interval: string
+  until: string | null
+  limit: number
+}
+
+export type JournalSummaryRequest = {
+  symbol: string
+  interval: string
+  start: string
+  end: string
+  model_name?: string | null
+}
+
+export type AgentRunOnceRequest = {
+  symbol: string | null
+  interval: string
+  mode: 'dry-run' | 'spot-demo'
+  policy: 'threshold' | 'llm'
+  show_prompt: boolean
+  dry_run_usdt_balance: number
+  dry_run_base_asset_balance: number
+  max_trade_usdt: number
+  max_position_usdt: number
+  min_predicted_return: number
+  prediction_staleness_minutes: number
+  emergency_stop: boolean
+  max_daily_realized_loss_usdt: number
+  max_orders_per_day: number
+  order_cooldown_minutes: number
+  max_total_exposure_usdt: number
+}
+
+async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...init?.headers,
+    },
+  })
   if (!response.ok) {
     const body = await response.text()
     throw new Error(`${response.status} ${response.statusText}: ${body}`)
   }
   return response.json() as Promise<T>
+}
+
+export function getHealth() {
+  return fetchJson<HealthResponse>('/api/health')
 }
 
 export function getSymbols(interval: string) {
@@ -151,4 +331,94 @@ export function getDashboardSummary(params: {
 
 export function getPrompt(journalId: number) {
   return fetchJson<PromptResponse>(`/api/llm/prompts/${journalId}`)
+}
+
+export function getSpotDemoPortfolio(symbol: string) {
+  return fetchJson<PortfolioResponse>(`/api/spot-demo/portfolio?symbol=${encodeURIComponent(symbol)}`)
+}
+
+export function getModelArtifacts(params: { symbol: string; interval: string; limit?: number }) {
+  const query = new URLSearchParams({
+    symbol: params.symbol,
+    interval: params.interval,
+    limit: String(params.limit ?? 100),
+  })
+  return fetchJson<ModelArtifactsResponse>(`/api/model-artifacts?${query.toString()}`)
+}
+
+export function submitSpotDemoMarketBuy(request: ManualBuyRequest) {
+  return fetchJson<ManualOrderResponse>('/api/spot-demo/market-buy', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function submitSpotDemoMarketSell(request: ManualSellRequest) {
+  return fetchJson<ManualOrderResponse>('/api/spot-demo/market-sell', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function runLiveCycleOnce(request: LiveCycleRequest) {
+  return fetchJson<LiveCycleResponse>('/api/agent/run-live-once', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function initDatabase(request: InitDatabaseRequest) {
+  return fetchJson<unknown>('/api/database/init', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function fetchOhlcv(request: FetchOhlcvRequest) {
+  return fetchJson<unknown>('/api/market/fetch-ohlcv', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function ingestOhlcv(request: IngestOhlcvRequest) {
+  return fetchJson<unknown>('/api/market/ingest-ohlcv', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function runPrediction(request: PredictRequest) {
+  return fetchJson<unknown>('/api/predict', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function settlePredictions(request: SettlePredictionsRequest) {
+  return fetchJson<unknown>('/api/predictions/settle', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function summarizePredictionJournal(request: JournalSummaryRequest) {
+  return fetchJson<unknown>('/api/prediction-journal/summary', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function runAgentOnce(request: AgentRunOnceRequest) {
+  return fetchJson<unknown>('/api/agent/run-once', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function summarizeAgentJournal(request: JournalSummaryRequest) {
+  return fetchJson<unknown>('/api/agent/journal/summary', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
 }

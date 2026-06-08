@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+from pathlib import Path
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -53,6 +56,15 @@ class FakeDashboardService:
         if journal_id == 404:
             return {"status": "not_found", "journal_id": journal_id}
         return {"status": "ok", "journal_id": journal_id, "prompt": "user prompt"}
+
+
+class FakeRepository:
+    """Small repository double for operation-route tests."""
+
+    _engine = SimpleNamespace(url=SimpleNamespace(database="test-db"))
+
+    def summarize_agent_decision_journal(self, **kwargs):
+        return SimpleNamespace(to_dict=lambda: {"decision_count": 0, **kwargs})
 
 
 class FakeSpotDemoAdapter:
@@ -193,6 +205,89 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["symbols"], ["BTCUSDT"])
+
+    def test_model_artifacts_route_lists_latest_trained_models(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            results_dir = Path(temp_dir)
+            run_dir = results_dir / "20260601T000000Z_btcusdt_1m_xgboost_prod_15steps"
+            run_dir.mkdir()
+            artifact = run_dir / "model.pkl"
+            artifact.write_bytes(b"model")
+            (run_dir / "summary.json").write_text(
+                """
+                {
+                  "run_id": "20260601T000000Z_btcusdt_1m_xgboost_prod_15steps",
+                  "symbol": "BTCUSDT",
+                  "interval": "1m",
+                  "model_name": "xgboost",
+                  "model_artifact_path": "%s",
+                  "end_time": "2026-06-01T00:00:00+00:00",
+                  "metrics": {"direction_accuracy": 0.52},
+                  "backtest": {"cumulative_return": 0.01, "trade_count": 2}
+                }
+                """
+                % artifact
+            )
+            walk_forward_dir = results_dir / "20260602T000000Z_btcusdt_1m_arima_15h"
+            walk_forward_dir.mkdir()
+            walk_forward_artifact = walk_forward_dir / "trained_models.pkl"
+            walk_forward_artifact.write_bytes(b"models")
+            (walk_forward_dir / "summary.json").write_text(
+                """
+                {
+                  "request": {
+                    "symbol": "BTCUSDT",
+                    "interval": "1m",
+                    "model_name": "arima",
+                    "end_time": "2026-06-02T00:00:00+00:00"
+                  },
+                  "aggregate_metrics": {"direction_accuracy": 0.75}
+                }
+                """
+            )
+
+            with patch("capm.api.app.MODEL_RESULTS_DIR", results_dir):
+                response = self.client.get("/api/model-artifacts?symbol=BTCUSDT&interval=1m")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["status"], "ok")
+        self.assertEqual(len(body["artifacts"]), 2)
+        self.assertEqual({item["model_name"] for item in body["artifacts"]}, {"arima", "xgboost"})
+        self.assertEqual({item["artifact_kind"] for item in body["artifacts"]}, {"production", "walk_forward"})
+        self.assertIn(str(artifact), {item["artifact_path"] for item in body["latest_by_model"]})
+        self.assertIn(str(walk_forward_artifact), {item["artifact_path"] for item in body["latest_by_model"]})
+
+    def test_database_init_route_initializes_symbols(self) -> None:
+        with patch("capm.api.app.initialize_database", return_value=FakeRepository()) as initialize:
+            response = self.client.post("/api/database/init", json={"symbols": ["BTCUSDT"]})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["database"], "test-db")
+        initialize.assert_called_once_with(["BTCUSDT"])
+
+    def test_agent_run_once_threshold_requires_symbol(self) -> None:
+        response = self.client.post(
+            "/api/agent/run-once",
+            json={"interval": "1m", "policy": "threshold", "mode": "dry-run"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_agent_journal_summary_route(self) -> None:
+        with patch("capm.api.app.build_repository", return_value=FakeRepository()):
+            response = self.client.post(
+                "/api/agent/journal/summary",
+                json={
+                    "symbol": "BTCUSDT",
+                    "interval": "1m",
+                    "start": "2026-06-01T00:00:00Z",
+                    "end": "2026-06-02T00:00:00Z",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["summary"]["decision_count"], 0)
 
 
 if __name__ == "__main__":

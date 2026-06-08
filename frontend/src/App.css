@@ -47,7 +47,8 @@
 
 select,
 input,
-button {
+button,
+textarea {
   min-height: 34px;
   border: 1px solid #111;
   border-radius: 0;
@@ -66,6 +67,12 @@ input {
   width: 76px;
 }
 
+textarea {
+  width: 100%;
+  padding: 9px;
+  resize: vertical;
+}
+
 button {
   cursor: pointer;
 }
@@ -73,6 +80,18 @@ button {
 button:hover {
   background: #111;
   color: #fff;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  border-color: #aaa;
+  background: #eee;
+  color: #777;
+}
+
+button:disabled:hover {
+  background: #eee;
+  color: #777;
 }
 
 .refresh-button,
@@ -109,7 +128,7 @@ button:hover {
 
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -296,6 +315,174 @@ tbody tr:hover {
   font-size: 13px;
 }
 
+.control-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 12px;
+}
+
+.artifact-selector {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.artifact-selector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #555;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.artifact-selector-head button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.artifact-list {
+  display: grid;
+  border: 1px solid #d5d5d5;
+  background: #fff;
+}
+
+.artifact-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  border-bottom: 1px solid #e3e3e3;
+  padding: 10px;
+  color: #111;
+}
+
+.artifact-option:last-child {
+  border-bottom: 0;
+}
+
+.artifact-option input {
+  width: 16px;
+  min-height: 16px;
+  margin-top: 1px;
+}
+
+.artifact-option span,
+.artifact-option strong,
+.artifact-option small {
+  display: block;
+  min-width: 0;
+}
+
+.artifact-option strong {
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.artifact-option small {
+  margin-top: 4px;
+  color: #666;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.inline-error {
+  border: 1px solid #111;
+  padding: 9px;
+  color: #111;
+  font-size: 12px;
+}
+
+.control-grid.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.control-form.wide {
+  grid-column: span 2;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.control-form,
+.run-form {
+  display: grid;
+  gap: 10px;
+}
+
+.control-form {
+  border: 1px solid #d5d5d5;
+  padding: 12px;
+}
+
+.control-form h3,
+.result-block h3 {
+  margin: 0;
+  color: #111;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.control-form label,
+.run-form label {
+  display: grid;
+  gap: 5px;
+  color: #555;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.control-form input,
+.run-form input,
+.run-form select {
+  width: 100%;
+}
+
+.check-row {
+  display: flex !important;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 8px !important;
+  color: #111 !important;
+}
+
+.check-row input {
+  width: 16px;
+  min-height: 16px;
+  accent-color: #111;
+}
+
+.control-form button,
+.run-form button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  font-weight: 700;
+}
+
+.run-form {
+  padding: 12px;
+}
+
+.run-form > .control-grid {
+  padding: 0;
+}
+
+.result-block {
+  padding: 0 12px 12px;
+}
+
 .drawer-backdrop {
   position: fixed;
   inset: 0;
@@ -343,7 +530,8 @@ tbody tr:hover {
   padding: 14px;
 }
 
-.prompt-blocks h3 {
+.prompt-blocks h3,
+.result-block h3 {
   margin: 0;
   border-bottom: 1px solid #111;
   padding: 8px 10px;
@@ -381,7 +569,12 @@ pre {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .kv-grid {
+  .kv-grid,
+  .control-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .control-grid.three {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -393,8 +586,15 @@ pre {
 
   .metrics-grid,
   .main-grid,
-  .kv-grid {
+  .kv-grid,
+  .control-grid,
+  .control-grid.three,
+  .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .control-form.wide {
+    grid-column: span 1;
   }
 
   .toolbar label,

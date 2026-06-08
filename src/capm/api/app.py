@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import json
+from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated
 
@@ -13,10 +16,28 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from capm.core.config import BinanceSettings
+from capm.domains.market_data import HistoricalOHLCRequest, interval_to_timedelta
 from capm.domains.trading import DecisionAction, ProposedDecision
 from capm.infra.exchange import BinanceSpotDemoTradingAdapter
-from capm.main import _build_live_cycle_service, _live_cycle_payload, build_repository
+from capm.infra.exchange import BinanceSpotMarketDataAdapter
+from capm.init_db import initialize_database
+from capm.main import (
+    _agent_decision_payload,
+    _build_live_cycle_service,
+    _live_cycle_payload,
+    _risk_config_from_args,
+    build_repository,
+    fetch_ohlcv,
+    parse_datetime,
+)
 from capm.services.dashboard import DashboardReportRequest, DashboardReportService
+from capm.services.ingestion import BinancePublicDumpIngestionService, HistoricalMarketDataIngestionService
+from capm.services.llm_decision_policy import LLMDecisionPolicy
+from capm.core.config import LLMSettings
+from capm.services.prediction_journal import PredictionJournalService
+from capm.services.prediction_runtime import PredictionRuntimeService
+from capm.services.trading_agent import TradingAgentService
+from capm.domains.trading import PortfolioSnapshot
 
 
 def get_dashboard_service() -> DashboardReportService:
@@ -31,6 +52,103 @@ def get_spot_demo_adapter() -> BinanceSpotDemoTradingAdapter:
 
 DashboardServiceDependency = Annotated[DashboardReportService, Depends(get_dashboard_service)]
 SpotDemoAdapterDependency = Annotated[BinanceSpotDemoTradingAdapter, Depends(get_spot_demo_adapter)]
+MODEL_RESULTS_DIR = Path("experiments/results")
+
+
+def _risk_args_from_request(request: AgentRunOnceRequest | LiveCycleRunOnceRequest) -> SimpleNamespace:
+    return SimpleNamespace(
+        max_trade_usdt=request.max_trade_usdt,
+        max_position_usdt=request.max_position_usdt,
+        min_predicted_return=getattr(request, "min_predicted_return", 0.0005),
+        prediction_staleness_minutes=getattr(request, "prediction_staleness_minutes", 5),
+        emergency_stop=request.emergency_stop,
+        max_daily_realized_loss_usdt=request.max_daily_realized_loss_usdt,
+        max_orders_per_day=request.max_orders_per_day,
+        order_cooldown_minutes=request.order_cooldown_minutes,
+        max_total_exposure_usdt=request.max_total_exposure_usdt,
+    )
+
+
+def datetime_now_minus_interval(interval: str) -> datetime:
+    """Return the default settlement cutoff used by the CLI."""
+    return datetime.now(UTC) - interval_to_timedelta(interval)
+
+
+def _discover_model_artifacts(
+    *,
+    symbol: str | None = None,
+    interval: str | None = None,
+    results_dir: Path | None = None,
+    limit: int = 100,
+) -> dict[str, object]:
+    """Return trained model artifacts from local experiment results."""
+    results_dir = results_dir or MODEL_RESULTS_DIR
+    artifacts: list[dict[str, object]] = []
+    if not results_dir.exists():
+        return {"status": "ok", "results_dir": str(results_dir), "artifacts": [], "latest_by_model": []}
+
+    normalized_symbol = symbol.strip().upper() if symbol else None
+    normalized_interval = interval.strip() if interval else None
+    for summary_path in sorted(results_dir.glob("*/summary.json"), reverse=True):
+        try:
+            summary = json.loads(summary_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        request = summary.get("request") if isinstance(summary.get("request"), dict) else {}
+        metrics = summary.get("metrics") if isinstance(summary.get("metrics"), dict) else {}
+        if not metrics:
+            metrics = summary.get("aggregate_metrics") if isinstance(summary.get("aggregate_metrics"), dict) else {}
+        backtest = summary.get("backtest") if isinstance(summary.get("backtest"), dict) else {}
+
+        artifact_path = Path(str(summary.get("model_artifact_path") or summary_path.parent / "model.pkl"))
+        artifact_kind = "production"
+        if not artifact_path.is_file():
+            walk_forward_artifact_path = summary_path.parent / "trained_models.pkl"
+            if not walk_forward_artifact_path.is_file():
+                continue
+            artifact_path = walk_forward_artifact_path
+            artifact_kind = "walk_forward"
+        if not artifact_path.is_file():
+            continue
+
+        artifact_symbol = str(summary.get("symbol") or request.get("symbol") or "").upper()
+        artifact_interval = str(summary.get("interval") or request.get("interval") or "")
+        if normalized_symbol and artifact_symbol != normalized_symbol:
+            continue
+        if normalized_interval and artifact_interval != normalized_interval:
+            continue
+
+        stat = artifact_path.stat()
+        artifacts.append(
+            {
+                "run_id": summary.get("run_id") or summary_path.parent.name,
+                "symbol": artifact_symbol,
+                "interval": artifact_interval,
+                "model_name": summary.get("model_name") or request.get("model_name"),
+                "artifact_kind": artifact_kind,
+                "artifact_path": str(artifact_path),
+                "summary_path": str(summary_path),
+                "trained_through": summary.get("end_time") or request.get("end_time"),
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+                "direction_accuracy": metrics.get("direction_accuracy"),
+                "mape": metrics.get("mape"),
+                "rmse": metrics.get("rmse"),
+                "cumulative_return": backtest.get("cumulative_return"),
+                "trade_count": backtest.get("trade_count"),
+            }
+        )
+
+    artifacts.sort(key=lambda item: str(item["modified_at"]), reverse=True)
+    latest_by_model: dict[str, dict[str, object]] = {}
+    for artifact in artifacts:
+        model_name = str(artifact.get("model_name") or artifact["run_id"])
+        latest_by_model.setdefault(model_name, artifact)
+    return {
+        "status": "ok",
+        "results_dir": str(results_dir),
+        "artifacts": artifacts[:limit],
+        "latest_by_model": list(latest_by_model.values()),
+    }
 
 
 class SpotDemoMarketBuyRequest(BaseModel):
@@ -69,6 +187,86 @@ class LiveCycleRunOnceRequest(BaseModel):
     max_total_exposure_usdt: float = Field(default=100.0, gt=0)
 
 
+class InitDatabaseRequest(BaseModel):
+    """Initialize database metadata and optional symbol tables."""
+
+    symbols: list[str] = Field(default_factory=list)
+
+
+class FetchOHLCVRequest(BaseModel):
+    """Fetch historical candles, optionally persisting missing rows."""
+
+    symbol: str = Field(min_length=1)
+    interval: str = Field(default="1m", min_length=1)
+    start: str = Field(min_length=1)
+    end: str = Field(min_length=1)
+    mode: str = Field(default="demo", pattern="^(demo|live)$")
+    persist: bool = False
+    batch_size: int = Field(default=10_000, ge=1)
+
+
+class IngestOHLCVRequest(BaseModel):
+    """Ingest OHLCV candles from REST or public dumps."""
+
+    symbol: str = Field(min_length=1)
+    interval: str = Field(default="1m", min_length=1)
+    start: str = Field(min_length=1)
+    end: str = Field(min_length=1)
+    source: str = Field(default="dump-with-rest-tail", pattern="^(rest|dump|dump-with-rest-tail)$")
+    mode: str = Field(default="live", pattern="^(demo|live)$")
+    batch_size: int = Field(default=50_000, ge=1)
+
+
+class PredictRequest(BaseModel):
+    """Run one persisted model artifact against DB-backed data."""
+
+    model_artifact: str = Field(min_length=1)
+    symbol: str = Field(min_length=1)
+    interval: str = Field(default="1m", min_length=1)
+    at: str | None = None
+    journal: bool = False
+
+
+class SettlePredictionsRequest(BaseModel):
+    """Settle prediction journal rows whose target candles are available."""
+
+    symbol: str = Field(min_length=1)
+    interval: str = Field(default="1m", min_length=1)
+    until: str | None = None
+    limit: int = Field(default=1000, ge=1)
+
+
+class JournalSummaryRequest(BaseModel):
+    """Summarize prediction or agent journal rows."""
+
+    symbol: str = Field(min_length=1)
+    interval: str = Field(default="1m", min_length=1)
+    start: str = Field(min_length=1)
+    end: str = Field(min_length=1)
+    model_name: str | None = None
+
+
+class AgentRunOnceRequest(BaseModel):
+    """Run one threshold or LLM policy trading-agent cycle."""
+
+    symbol: str | None = None
+    interval: str = Field(default="1m", min_length=1)
+    mode: str = Field(default="dry-run", pattern="^(dry-run|spot-demo)$")
+    policy: str = Field(default="threshold", pattern="^(threshold|llm)$")
+    show_prompt: bool = False
+    dry_run_usdt_balance: float = Field(default=1000.0, ge=0)
+    dry_run_base_asset_balance: float = Field(default=0.0, ge=0)
+    max_trade_usdt: float = Field(default=25.0, gt=0)
+    max_position_usdt: float = Field(default=100.0, gt=0)
+    min_predicted_return: float = 0.0005
+    prediction_staleness_minutes: int = Field(default=5, ge=1)
+    emergency_stop: bool = False
+    max_daily_realized_loss_usdt: float = Field(default=50.0, gt=0)
+    max_orders_per_day: int = Field(default=20, ge=1)
+    order_cooldown_minutes: int = Field(default=5, ge=0)
+    max_total_exposure_usdt: float = Field(default=100.0, gt=0)
+
+
 def create_app() -> FastAPI:
     """Create the dashboard API application."""
     app = FastAPI(title="CAPM Dashboard API", version="0.1.0")
@@ -90,6 +288,178 @@ def create_app() -> FastAPI:
         interval: str = Query(default="1m", min_length=1),
     ) -> object:
         return jsonable_encoder(service.list_symbols(interval=interval))
+
+    @app.get("/api/model-artifacts")
+    def model_artifacts(
+        symbol: str | None = Query(default=None, min_length=1),
+        interval: str | None = Query(default=None, min_length=1),
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> object:
+        return jsonable_encoder(_discover_model_artifacts(symbol=symbol, interval=interval, limit=limit))
+
+    @app.post("/api/database/init")
+    def init_database(request: InitDatabaseRequest) -> object:
+        repository = initialize_database(request.symbols)
+        return jsonable_encoder(
+            {
+                "status": "ok",
+                "database": repository._engine.url.database or "configured database",
+                "symbols": request.symbols,
+            }
+        )
+
+    @app.post("/api/market/fetch-ohlcv")
+    def market_fetch_ohlcv(request: FetchOHLCVRequest) -> object:
+        if not request.persist:
+            candles = fetch_ohlcv(
+                symbol=request.symbol,
+                interval=request.interval,
+                start_at=parse_datetime(request.start),
+                end_at=parse_datetime(request.end),
+                mode=request.mode,
+            )
+            return jsonable_encoder({"status": "ok", "persisted": False, "candles": candles})
+
+        repository = initialize_database([request.symbol])
+        adapter = BinanceSpotMarketDataAdapter(settings=BinanceSettings.from_env(mode=request.mode))
+        try:
+            service = HistoricalMarketDataIngestionService(
+                market_data_port=adapter,
+                repository_port=repository,
+                persist_batch_candle_count=request.batch_size,
+            )
+            result = service.ingest_ohlcv(
+                HistoricalOHLCRequest(
+                    symbol=request.symbol,
+                    interval=request.interval,
+                    start_at=parse_datetime(request.start),
+                    end_at=parse_datetime(request.end),
+                )
+            )
+            return jsonable_encoder(
+                {
+                    "status": "ok",
+                    "source": "rest",
+                    "persisted": True,
+                    "fetched_count": result.fetched_count,
+                    "stored_count": result.stored_count,
+                    "latest": repository.get_latest_candle_time(request.symbol, request.interval),
+                }
+            )
+        finally:
+            adapter.close()
+
+    @app.post("/api/market/ingest-ohlcv")
+    def market_ingest_ohlcv(request: IngestOHLCVRequest) -> object:
+        ohlcv_request = HistoricalOHLCRequest(
+            symbol=request.symbol,
+            interval=request.interval,
+            start_at=parse_datetime(request.start),
+            end_at=parse_datetime(request.end),
+        )
+        repository = initialize_database([ohlcv_request.symbol])
+
+        if request.source == "rest":
+            adapter = BinanceSpotMarketDataAdapter(settings=BinanceSettings.from_env(mode=request.mode))
+            try:
+                service = HistoricalMarketDataIngestionService(
+                    market_data_port=adapter,
+                    repository_port=repository,
+                    persist_batch_candle_count=request.batch_size,
+                )
+                result = service.ingest_ohlcv(ohlcv_request)
+                return jsonable_encoder(
+                    {
+                        "status": "ok",
+                        "source": "rest",
+                        "stored_count": result.stored_count,
+                        "fetched_count": result.fetched_count,
+                        "latest": repository.get_latest_candle_time(ohlcv_request.symbol, ohlcv_request.interval),
+                    }
+                )
+            finally:
+                adapter.close()
+
+        rest_adapter = None
+        if request.source == "dump-with-rest-tail":
+            rest_adapter = BinanceSpotMarketDataAdapter(settings=BinanceSettings.from_env(mode=request.mode))
+        service = BinancePublicDumpIngestionService(
+            repository_port=repository,
+            rest_adapter=rest_adapter,
+            persist_batch_candle_count=request.batch_size,
+        )
+        try:
+            result = service.ingest_ohlcv(
+                ohlcv_request,
+                include_rest_tail=request.source == "dump-with-rest-tail",
+            )
+            return jsonable_encoder(
+                {
+                    "status": "ok",
+                    "source": request.source,
+                    "downloaded_files": result.downloaded_files,
+                    "skipped_files": result.skipped_files,
+                    "coverage_skipped_files": result.coverage_skipped_files,
+                    "dump_rows": result.dump_rows,
+                    "rest_rows": result.rest_rows,
+                    "stored_rows": result.stored_rows,
+                    "elapsed_seconds": result.elapsed_seconds,
+                    "latest": repository.get_latest_candle_time(ohlcv_request.symbol, ohlcv_request.interval),
+                }
+            )
+        finally:
+            service.close()
+            if rest_adapter is not None:
+                rest_adapter.close()
+
+    @app.post("/api/predict")
+    def predict(request: PredictRequest) -> object:
+        repository = build_repository()
+        runtime = PredictionRuntimeService(repository)
+        prediction = runtime.predict(
+            artifact_path=request.model_artifact,
+            symbol=request.symbol,
+            interval=request.interval,
+            reference_time=parse_datetime(request.at) if request.at else None,
+        )
+        payload = prediction.to_dict()
+        if request.journal:
+            journal_entry = PredictionJournalService(
+                journal_repository=repository,
+                market_data_repository=repository,
+            ).journal_prediction(prediction)
+            payload["journal_id"] = journal_entry.id
+        return jsonable_encoder({"status": "ok", "prediction": payload})
+
+    @app.post("/api/predictions/settle")
+    def settle_predictions(request: SettlePredictionsRequest) -> object:
+        repository = build_repository()
+        until = parse_datetime(request.until) if request.until else datetime_now_minus_interval(request.interval)
+        result = PredictionJournalService(
+            journal_repository=repository,
+            market_data_repository=repository,
+        ).settle_predictions(
+            symbol=request.symbol,
+            interval=request.interval,
+            until=until,
+            limit=request.limit,
+        )
+        return jsonable_encoder({"status": "ok", **result})
+
+    @app.post("/api/prediction-journal/summary")
+    def prediction_journal_summary(request: JournalSummaryRequest) -> object:
+        repository = build_repository()
+        summary = PredictionJournalService(
+            journal_repository=repository,
+            market_data_repository=repository,
+        ).summarize(
+            symbol=request.symbol,
+            interval=request.interval,
+            start_time=parse_datetime(request.start),
+            end_time=parse_datetime(request.end),
+            model_name=request.model_name,
+        )
+        return jsonable_encoder({"status": "ok", "summary": summary.to_dict()})
 
     @app.get("/api/dashboard/summary")
     def dashboard_summary(
@@ -156,6 +526,76 @@ def create_app() -> FastAPI:
         if payload["status"] == "not_found":
             raise HTTPException(status_code=404, detail=f"Agent decision journal entry {journal_id} was not found.")
         return jsonable_encoder(payload)
+
+    @app.post("/api/agent/run-once")
+    def agent_run_once(request: AgentRunOnceRequest) -> object:
+        if request.policy == "threshold" and not request.symbol:
+            raise HTTPException(status_code=400, detail="Threshold policy requires symbol.")
+        repository = build_repository()
+        portfolio = PortfolioSnapshot(
+            available_usdt=request.dry_run_usdt_balance,
+            base_asset_free=request.dry_run_base_asset_balance,
+        )
+        risk_config = _risk_config_from_args(_risk_args_from_request(request))
+        exchange_adapter = None
+        if request.mode == "spot-demo":
+            exchange_adapter = BinanceSpotDemoTradingAdapter(BinanceSettings.from_env(mode="demo"))
+        service = TradingAgentService(repository=repository, exchange_adapter=exchange_adapter)
+        try:
+            if request.policy == "llm":
+                llm_policy = LLMDecisionPolicy(LLMSettings.from_env())
+                try:
+                    entries = service.run_llm_once(
+                        interval=request.interval,
+                        mode=request.mode,
+                        portfolio=portfolio,
+                        risk_config=risk_config,
+                        llm_policy=llm_policy,
+                    )
+                finally:
+                    llm_policy.close()
+            else:
+                entries = (
+                    service.run_once(
+                        symbol=str(request.symbol),
+                        interval=request.interval,
+                        mode=request.mode,
+                        portfolio=portfolio,
+                        risk_config=risk_config,
+                    ),
+                )
+            payload = {"status": "ok", "decisions": [_agent_decision_payload(entry) for entry in entries]}
+            if request.show_prompt:
+                if request.policy != "llm":
+                    raise HTTPException(status_code=400, detail="show_prompt requires policy=llm.")
+                batch = service.last_llm_batch
+                if batch is None:
+                    raise HTTPException(status_code=500, detail="LLM prompt metadata was not produced.")
+                payload["llm"] = {
+                    "system_prompt": batch.system_prompt,
+                    "prompt": batch.prompt,
+                    "raw_response": batch.raw_response,
+                    "attempts": batch.attempts,
+                    "model": batch.model,
+                    "provider_host": batch.provider_host,
+                    "latency_seconds": batch.latency_seconds,
+                    "usage": batch.usage,
+                }
+            return jsonable_encoder(payload)
+        finally:
+            if exchange_adapter is not None:
+                exchange_adapter.close()
+
+    @app.post("/api/agent/journal/summary")
+    def agent_journal_summary(request: JournalSummaryRequest) -> object:
+        repository = build_repository()
+        summary = repository.summarize_agent_decision_journal(
+            symbol=request.symbol,
+            interval=request.interval,
+            start_time=parse_datetime(request.start),
+            end_time=parse_datetime(request.end),
+        )
+        return jsonable_encoder({"status": "ok", "summary": summary.to_dict()})
 
     @app.get("/api/spot-demo/portfolio")
     def spot_demo_portfolio(

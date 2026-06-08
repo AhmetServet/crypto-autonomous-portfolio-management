@@ -94,6 +94,41 @@ class BinanceSpotDemoTradingAdapterTests(unittest.TestCase):
 
         self.assertIn("quantity=0.00014000", str(captured[1].url))
 
+    def test_adapter_falls_back_to_lot_size_when_market_lot_step_size_is_zero(self) -> None:
+        captured = []
+        exchange_info = self._exchange_info()
+        exchange_info["symbols"][0]["filters"] = [
+            {
+                "filterType": "MARKET_LOT_SIZE",
+                "minQty": "0.00000000",
+                "maxQty": "100.00000000",
+                "stepSize": "0.00000000",
+            },
+            {
+                "filterType": "LOT_SIZE",
+                "minQty": "0.00001000",
+                "maxQty": "100.00000000",
+                "stepSize": "0.00001000",
+            },
+            {"filterType": "MIN_NOTIONAL", "minNotional": "5.00000000"},
+        ]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            if request.url.path == "/api/v3/exchangeInfo":
+                return httpx.Response(200, json=exchange_info)
+            return httpx.Response(200, json={"orderId": 1, "status": "FILLED"})
+
+        adapter = BinanceSpotDemoTradingAdapter(
+            BinanceSettings(api_key="key", api_secret="secret"),
+            client=httpx.Client(transport=httpx.MockTransport(handler), base_url="https://demo-api.binance.com"),
+            now_ms=lambda: 123,
+        )
+
+        adapter.submit_market_order("BTCUSDT", ProposedDecision(action=DecisionAction.SELL, requested_quantity=0.000149))
+
+        self.assertIn("quantity=0.00014000", str(captured[1].url))
+
     def test_adapter_rejects_buy_below_minimum_notional_before_order_request(self) -> None:
         captured = []
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -14,7 +15,13 @@ from capm.domains.features import ComputedIndicatorSet, GAP_REASON_MISSING_DERIV
 from capm.domains.market_data import OHLCV
 from capm.domains.prediction import PredictionJournalEntry, PredictionJournalSettlement
 from capm.domains.trading import AgentDecisionJournalEntry
-from capm.infra.database.models import get_coinpair_model, get_coverage_model, get_feature_model, get_ohlcv_model
+from capm.infra.database.models import (
+    get_agent_decision_journal_model,
+    get_coinpair_model,
+    get_coverage_model,
+    get_feature_model,
+    get_ohlcv_model,
+)
 from capm.infra.database.timescale import TimescaleMarketDataRepository
 
 
@@ -97,6 +104,13 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
         mapped = model.from_domain(candle)
 
         self.assertEqual(mapped.to_domain(), candle)
+
+    def test_static_model_factories_are_safe_under_concurrent_repository_creation(self) -> None:
+        schema_name = "concurrent_static_model_test"
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            models = tuple(executor.map(lambda _: get_agent_decision_journal_model(schema_name), range(32)))
+
+        self.assertEqual(len({id(model) for model in models}), 1)
 
     def test_feature_model_factory_round_trips_domain_entity(self) -> None:
         model = get_feature_model("btc/usdt")
