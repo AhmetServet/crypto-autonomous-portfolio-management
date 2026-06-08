@@ -23,8 +23,10 @@ export type DashboardSummary = {
   lookback_hours: number
   market: {
     latest_candle_time: string | null
+    latest_candle_age_seconds: number | null
     latest_candle: Candle | null
     latest_indicator_time: string | null
+    latest_indicator_age_seconds: number | null
     indicator_ready: boolean | null
     missing_indicator_outputs: string[]
     indicators: Record<string, string | null>
@@ -68,8 +70,14 @@ export type DashboardSummary = {
 export type PredictionRow = {
   id: number
   model_name: string
+  artifact_kind: string
+  artifact_path: string
   reference_time: string
   prediction_time: string
+  forecast_horizon: number
+  target_mode: string
+  reference_value: number
+  predicted_value: number
   predicted_return: number
   predicted_direction: string
   actual_return: number | null
@@ -88,9 +96,14 @@ export type DecisionRow = {
   action: string
   confidence: number | null
   reason: string
+  requested_quantity: number | null
+  requested_usdt_amount: number | null
+  risk_violations: Array<Record<string, unknown>>
   risk_status: string
   execution_status: string
   exchange_order_id: string | null
+  exchange_client_order_id: string | null
+  exchange_response: Record<string, unknown>
   llm: {
     model: string | null
     provider_host: string | null
@@ -106,6 +119,18 @@ export type SymbolsResponse = {
   status: string
   interval: string
   symbols: string[]
+  symbol_statuses?: SymbolStatus[]
+}
+
+export type SymbolStatus = {
+  symbol: string
+  interval: string
+  latest_candle_time: string | null
+  latest_candle_age_seconds: number | null
+  latest_indicator_time: string | null
+  latest_indicator_age_seconds: number | null
+  indicator_ready: boolean | null
+  missing_indicator_outputs: string[]
 }
 
 export type PromptResponse = {
@@ -123,8 +148,24 @@ export type PromptResponse = {
 
 export type HealthResponse = {
   status: string
+  api?: string
   database: string
   available_symbols_1m?: string[]
+  symbol_statuses_1m?: SymbolStatus[]
+  binance_demo?: {
+    status: string
+    mode: string
+    base_url: string
+    api_key_configured: boolean
+    api_secret_configured: boolean
+    error?: string
+  }
+  llm_provider?: {
+    status: string
+    base_url: string
+    model: string | null
+    api_key_configured: boolean
+  }
   error?: string
 }
 

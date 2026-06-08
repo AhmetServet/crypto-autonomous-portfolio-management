@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import os
 from typing import Any, Protocol
 
 from capm.core.config import BinanceSettings
@@ -146,15 +147,37 @@ class DashboardReportService:
 
     def list_symbols(self, *, interval: str) -> dict[str, object]:
         """Return symbols currently available in the local database."""
-        return {"status": "ok", "interval": interval, "symbols": self.repository.get_available_symbols(interval)}
+        now = datetime.now(UTC)
+        symbols = self.repository.get_available_symbols(interval)
+        return {
+            "status": "ok",
+            "interval": interval,
+            "symbols": symbols,
+            "symbol_statuses": [
+                self._symbol_status_payload(symbol=symbol, interval=interval, now=now)
+                for symbol in symbols
+            ],
+        }
 
     def health(self) -> dict[str, object]:
         """Return API and database reachability."""
+        now = datetime.now(UTC)
         try:
             symbols = self.repository.get_available_symbols("1m")
         except Exception as exc:  # pragma: no cover - defensive boundary
             return {"status": "error", "database": "unreachable", "error": str(exc)}
-        return {"status": "ok", "database": "reachable", "available_symbols_1m": symbols}
+        return {
+            "status": "ok",
+            "api": "reachable",
+            "database": "reachable",
+            "available_symbols_1m": symbols,
+            "symbol_statuses_1m": [
+                self._symbol_status_payload(symbol=symbol, interval="1m", now=now)
+                for symbol in symbols
+            ],
+            "binance_demo": self._binance_demo_health_payload(),
+            "llm_provider": self._llm_provider_health_payload(),
+        }
 
     def summary(self, request: DashboardReportRequest) -> dict[str, object]:
         """Build the full dashboard summary payload."""
@@ -275,8 +298,10 @@ class DashboardReportService:
             "lookback_hours": request.lookback_hours,
             "market": {
                 "latest_candle_time": latest_candle_time,
+                "latest_candle_age_seconds": self._age_seconds(latest_candle_time, now),
                 "latest_candle": latest_candle.to_dict() if latest_candle else None,
                 "latest_indicator_time": latest_indicator_time,
+                "latest_indicator_age_seconds": self._age_seconds(latest_indicator_time, now),
                 "indicator_ready": latest_indicator.is_ready if latest_indicator else None,
                 "missing_indicator_outputs": latest_indicator.missing_outputs if latest_indicator else (),
                 "indicators": latest_indicator.values if latest_indicator else {},
@@ -291,6 +316,57 @@ class DashboardReportService:
                 decision_report_payload(entry, include_prompts=request.include_prompts) for entry in decisions
             ],
         }
+
+    def _symbol_status_payload(self, *, symbol: str, interval: str, now: datetime) -> dict[str, object]:
+        latest_candle_time = self.repository.get_latest_candle_time(symbol, interval)
+        latest_indicator_time = self.repository.get_latest_indicator_time(symbol, interval)
+        indicator = (
+            self.repository.get_indicator_set(symbol, interval, latest_indicator_time)
+            if latest_indicator_time is not None
+            else None
+        )
+        return {
+            "symbol": symbol,
+            "interval": interval,
+            "latest_candle_time": latest_candle_time,
+            "latest_candle_age_seconds": self._age_seconds(latest_candle_time, now),
+            "latest_indicator_time": latest_indicator_time,
+            "latest_indicator_age_seconds": self._age_seconds(latest_indicator_time, now),
+            "indicator_ready": indicator.is_ready if indicator else None,
+            "missing_indicator_outputs": indicator.missing_outputs if indicator else (),
+        }
+
+    @staticmethod
+    def _binance_demo_health_payload() -> dict[str, object]:
+        try:
+            settings = BinanceSettings.from_env(mode="demo")
+        except Exception as exc:
+            return {"status": "error", "mode": "demo", "error": str(exc)}
+        return {
+            "status": "configured" if settings.api_key and settings.api_secret else "missing_credentials",
+            "mode": settings.mode,
+            "base_url": settings.spot_rest_base_url,
+            "api_key_configured": bool(settings.api_key),
+            "api_secret_configured": bool(settings.api_secret),
+        }
+
+    @staticmethod
+    def _llm_provider_health_payload() -> dict[str, object]:
+        api_key = os.getenv("CAPM_LLM_API_KEY", "").strip()
+        model = os.getenv("CAPM_LLM_MODEL", "").strip()
+        base_url = os.getenv("CAPM_LLM_BASE_URL", "").strip() or "https://openrouter.ai/api/v1"
+        return {
+            "status": "configured" if api_key and model and base_url else "missing_configuration",
+            "base_url": base_url,
+            "model": model or None,
+            "api_key_configured": bool(api_key),
+        }
+
+    @staticmethod
+    def _age_seconds(value: datetime | None, now: datetime) -> float | None:
+        if value is None:
+            return None
+        return max(0.0, (now - value).total_seconds())
 
     def _latest_close(self, symbol: str, interval: str) -> float | None:
         latest_candle_time = self.repository.get_latest_candle_time(symbol, interval)

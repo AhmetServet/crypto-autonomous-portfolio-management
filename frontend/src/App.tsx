@@ -21,6 +21,7 @@ import {
   type DashboardSummary,
   type DecisionRow,
   type FetchOhlcvRequest,
+  type HealthResponse,
   type IngestOhlcvRequest,
   type JournalSummaryRequest,
   type LiveCycleRequest,
@@ -91,9 +92,23 @@ function compactTime(value: string | null | undefined) {
   }).format(new Date(value))
 }
 
+function formatAge(seconds: number | null | undefined) {
+  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '-'
+  if (seconds < 60) return `${Math.floor(seconds)}s`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`
+  return `${Math.floor(seconds / 86400)}d`
+}
+
 function artifactLabel(artifact: ModelArtifact) {
   const trained = artifact.trained_through ? compactTime(artifact.trained_through) : compactTime(artifact.modified_at)
   return `${artifact.model_name} / ${artifact.artifact_kind} / trained ${trained} / acc ${formatPercent(artifact.direction_accuracy)} / return ${formatPercent(artifact.cumulative_return)}`
+}
+
+function firstJsonValue(value: unknown) {
+  if (value === null || value === undefined) return '-'
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return JSON.stringify(value)
 }
 
 function statusClass(value: string | boolean | null | undefined) {
@@ -179,10 +194,14 @@ function DecisionsTable({
           <tr>
             <th>Time</th>
             <th>Action</th>
+            <th>Confidence</th>
+            <th>Request</th>
             <th>Risk</th>
             <th>Execution</th>
+            <th>Order</th>
             <th>LLM</th>
             <th>Latency</th>
+            <th>Violations</th>
             <th>Reason</th>
             <th></th>
           </tr>
@@ -194,12 +213,22 @@ function DecisionsTable({
               <td>
                 <span className={`badge ${statusClass(row.action)}`}>{row.action}</span>
               </td>
+              <td>{formatPercent(row.confidence)}</td>
+              <td>
+                {row.requested_usdt_amount
+                  ? `$${formatNumber(row.requested_usdt_amount, 2)}`
+                  : row.requested_quantity
+                    ? formatNumber(row.requested_quantity, 8)
+                    : '-'}
+              </td>
               <td>
                 <span className={`badge ${statusClass(row.risk_status)}`}>{row.risk_status}</span>
               </td>
               <td>{row.execution_status}</td>
+              <td>{row.exchange_order_id ?? '-'}</td>
               <td>{row.llm.model ?? '-'}</td>
               <td>{row.llm.latency_seconds ? `${formatNumber(row.llm.latency_seconds, 2)}s` : '-'}</td>
+              <td className="truncate">{row.risk_violations.length ? firstJsonValue(row.risk_violations[0]) : '-'}</td>
               <td className="truncate">{row.reason || '-'}</td>
               <td className="actions">
                 <button type="button" className="icon-button" title="View prompt" onClick={() => onOpenPrompt(row.id)}>
@@ -223,7 +252,12 @@ function PredictionsTable({ rows }: { rows: PredictionRow[] }) {
           <tr>
             <th>Time</th>
             <th>Model</th>
+            <th>Kind</th>
+            <th>Horizon</th>
+            <th>Target</th>
             <th>Direction</th>
+            <th>Ref</th>
+            <th>Pred</th>
             <th>Pred Return</th>
             <th>Actual</th>
             <th>Settled</th>
@@ -235,9 +269,14 @@ function PredictionsTable({ rows }: { rows: PredictionRow[] }) {
             <tr key={row.id}>
               <td>{compactTime(row.reference_time)}</td>
               <td>{row.model_name}</td>
+              <td>{row.artifact_kind}</td>
+              <td>{row.forecast_horizon}</td>
+              <td>{row.target_mode}</td>
               <td>
                 <span className={`badge ${statusClass(row.predicted_direction)}`}>{row.predicted_direction}</span>
               </td>
+              <td>{formatNumber(row.reference_value, 2)}</td>
+              <td>{formatNumber(row.predicted_value, 2)}</td>
               <td>{formatPercent(row.predicted_return)}</td>
               <td>{formatPercent(row.actual_return)}</td>
               <td>{row.settled_at ? compactTime(row.settled_at) : '-'}</td>
@@ -294,6 +333,102 @@ function RiskList({ summary }: { summary: DashboardSummary }) {
         <strong>{`$${formatNumber(risk.realized_pnl_today_usdt, 2)}`}</strong>
       </div>
     </div>
+  )
+}
+
+function SystemHealthPanel({
+  health,
+  summary,
+}: {
+  health?: HealthResponse
+  summary?: DashboardSummary
+}) {
+  const binance = health?.binance_demo
+  const llm = health?.llm_provider
+  return (
+    <Panel title="System Health" icon={<Shield size={17} />}>
+      <div className="kv-grid">
+        <div>
+          <span>API</span>
+          <strong>{health?.api ?? health?.status ?? '-'}</strong>
+        </div>
+        <div>
+          <span>Database</span>
+          <strong>{health?.database ?? '-'}</strong>
+        </div>
+        <div>
+          <span>Binance Demo</span>
+          <strong>{binance?.status ?? '-'}</strong>
+        </div>
+        <div>
+          <span>LLM Provider</span>
+          <strong>{llm?.status ?? '-'}</strong>
+        </div>
+        <div>
+          <span>LLM Model</span>
+          <strong>{llm?.model ?? '-'}</strong>
+        </div>
+        <div>
+          <span>Latest Candle Age</span>
+          <strong>{formatAge(summary?.market.latest_candle_age_seconds)}</strong>
+        </div>
+        <div>
+          <span>Latest Indicator Age</span>
+          <strong>{formatAge(summary?.market.latest_indicator_age_seconds)}</strong>
+        </div>
+        <div>
+          <span>Symbol Count</span>
+          <strong>{health?.available_symbols_1m?.length ?? 0}</strong>
+        </div>
+      </div>
+    </Panel>
+  )
+}
+
+function IndicatorsPanel({ summary }: { summary?: DashboardSummary }) {
+  const indicators = Object.entries(summary?.market.indicators ?? {})
+  return (
+    <Panel title="Indicators" icon={<BarChart3 size={17} />}>
+      {summary ? (
+        <>
+          <div className="kv-grid">
+            <div>
+              <span>Ready</span>
+              <strong>{summary.market.indicator_ready ? 'yes' : 'no'}</strong>
+            </div>
+            <div>
+              <span>Latest Indicator</span>
+              <strong>{formatTime(summary.market.latest_indicator_time)}</strong>
+            </div>
+            <div>
+              <span>Age</span>
+              <strong>{formatAge(summary.market.latest_indicator_age_seconds)}</strong>
+            </div>
+            <div>
+              <span>Missing Outputs</span>
+              <strong>{summary.market.missing_indicator_outputs.length || '-'}</strong>
+            </div>
+          </div>
+          {summary.market.missing_indicator_outputs.length ? (
+            <div className="inline-note">{summary.market.missing_indicator_outputs.join(', ')}</div>
+          ) : null}
+          {indicators.length ? (
+            <div className="indicator-grid">
+              {indicators.map(([name, value]) => (
+                <div key={name}>
+                  <span>{name}</span>
+                  <strong>{value ?? '-'}</strong>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState message="No indicators stored for the latest indicator timestamp." />
+          )}
+        </>
+      ) : (
+        <EmptyState message="Loading indicators..." />
+      )}
+    </Panel>
   )
 }
 
@@ -702,6 +837,10 @@ function App() {
   })
 
   const symbols = symbolsQuery.data?.symbols.length ? symbolsQuery.data.symbols : [symbol]
+  const symbolStatusByName = useMemo(
+    () => new Map((symbolsQuery.data?.symbol_statuses ?? []).map((item) => [item.symbol, item])),
+    [symbolsQuery.data?.symbol_statuses],
+  )
   const summary = summaryQuery.data
 
   const latestDecision = summary?.recent_decisions[0]
@@ -724,7 +863,7 @@ function App() {
             <select value={symbol} onChange={(event) => setSymbol(event.target.value)}>
               {symbols.map((item) => (
                 <option key={item} value={item}>
-                  {item}
+                  {`${item} / candle ${formatAge(symbolStatusByName.get(item)?.latest_candle_age_seconds)} / indicator ${formatAge(symbolStatusByName.get(item)?.latest_indicator_age_seconds)}`}
                 </option>
               ))}
             </select>
@@ -792,10 +931,12 @@ function App() {
         <Metric
           label="API Health"
           value={healthQuery.data?.status ?? '-'}
-          subvalue={healthQuery.data ? `DB ${healthQuery.data.database}` : 'Checking'}
+          subvalue={healthQuery.data ? `DB ${healthQuery.data.database} / LLM ${healthQuery.data.llm_provider?.status ?? '-'}` : 'Checking'}
           icon={<Database size={17} />}
         />
       </section>
+
+      <SystemHealthPanel health={healthQuery.data} summary={summary} />
 
       <div className="main-grid">
         <Panel title="Position And Risk" icon={<Shield size={17} />}>
@@ -806,12 +947,12 @@ function App() {
           {summary ? (
             <div className="kv-grid">
               <div>
-                <span>Indicator Ready</span>
-                <strong>{summary.market.indicator_ready ? 'yes' : 'no'}</strong>
+                <span>Candle Time</span>
+                <strong>{formatTime(summary.market.latest_candle_time)}</strong>
               </div>
               <div>
-                <span>Latest Indicator</span>
-                <strong>{formatTime(summary.market.latest_indicator_time)}</strong>
+                <span>Candle Age</span>
+                <strong>{formatAge(summary.market.latest_candle_age_seconds)}</strong>
               </div>
               <div>
                 <span>Open</span>
@@ -835,6 +976,8 @@ function App() {
           )}
         </Panel>
       </div>
+
+      <IndicatorsPanel summary={summary} />
 
       <div className="main-grid">
         <Panel title="Spot Demo Portfolio" icon={<Wallet size={17} />}>
