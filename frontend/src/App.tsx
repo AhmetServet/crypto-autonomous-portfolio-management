@@ -1,1383 +1,99 @@
 import { useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
   AlertTriangle,
-  Archive,
   BarChart3,
   Clock,
-  Cpu,
   Database,
-  Eye,
-  Play,
   RefreshCw,
   Shield,
   ShoppingCart,
-  Square,
   Wallet,
-  X,
 } from 'lucide-react'
+
 import './App.css'
-import {
-  type AgentRunOnceRequest,
-  type BackfillIndicatorsRequest,
-  type DashboardSummary,
-  type DataCoverageResponse,
-  type DecisionRow,
-  type FetchOhlcvRequest,
-  type HealthResponse,
-  type IngestOhlcvRequest,
-  type JournalSummaryRequest,
-  type LiveCycleRequest,
-  type ModelArtifact,
-  type TrainingJob,
-  type TrainingType,
-  type PredictRequest,
-  type PredictionRow,
-  type RepairOhlcvGapsRequest,
-  type SettlePredictionsRequest,
-  backfillIndicators,
-  cancelTrainingJob,
-  createTrainingJob,
-  fetchOhlcv,
-  getDataCoverage,
-  getDashboardSummary,
-  getHealth,
-  getModelArtifacts,
-  getPrompt,
-  getSpotDemoPortfolio,
-  getSymbols,
-  getTrainingJob,
-  getTrainingJobs,
-  getTrainingPresets,
-  ingestOhlcv,
-  initDatabase,
-  repairOhlcvGaps,
-  runAgentOnce,
-  runLiveCycleOnce,
-  runPrediction,
-  settlePredictions,
-  submitSpotDemoMarketBuy,
-  submitSpotDemoMarketSell,
-  summarizeAgentJournal,
-  summarizePredictionJournal,
-  updateModelArtifactState,
-} from './api'
+import type { ModelArtifact } from './api'
+import { getDashboardSummary, getHealth, getModelArtifacts, getSpotDemoPortfolio, getSymbols, submitSpotDemoMarketBuy, submitSpotDemoMarketSell } from './api'
+import { AgentActionControls } from './dashboard/agent-controls'
+import { DatabaseMarketControls } from './dashboard/data-controls'
+import { INTERVALS, formatAge, formatNumber, formatPercent, formatTime } from './dashboard/format'
+import { LiveCyclePanel } from './dashboard/live-cycle-panel'
+import { ModelRegistryPanel } from './dashboard/model-registry'
+import { PredictionControls } from './dashboard/prediction-controls'
+import { Metric, MutationResult, Panel } from './dashboard/primitives'
+import { IndicatorsPanel, PromptDrawer, RiskList, SystemHealthPanel } from './dashboard/summary'
+import { DecisionsTable, PredictionsTable } from './dashboard/tables'
+import { TrainingPanel } from './dashboard/training-panel'
 
-const INTERVALS = ['1m', '5m', '15m', '1h']
-
-function defaultStart() {
-  return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-}
-
-function defaultEnd() {
-  return new Date().toISOString()
-}
-
-function formatNumber(value: number | null | undefined, digits = 2) {
-  if (value === null || value === undefined || Number.isNaN(value)) return '-'
-  return new Intl.NumberFormat('en-US', {
-    maximumFractionDigits: digits,
-    minimumFractionDigits: digits,
-  }).format(value)
-}
-
-function formatPercent(value: number | null | undefined) {
-  if (value === null || value === undefined || Number.isNaN(value)) return '-'
-  return `${formatNumber(value * 100, 2)}%`
-}
-
-function formatTime(value: string | null | undefined) {
-  if (!value) return '-'
-  return new Intl.DateTimeFormat('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(value))
-}
-
-function compactTime(value: string | null | undefined) {
-  if (!value) return '-'
-  return new Intl.DateTimeFormat('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(new Date(value))
-}
-
-function formatAge(seconds: number | null | undefined) {
-  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '-'
-  if (seconds < 60) return `${Math.floor(seconds)}s`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`
-  return `${Math.floor(seconds / 86400)}d`
-}
-
-function artifactLabel(artifact: ModelArtifact) {
-  const trained = artifact.trained_through ? compactTime(artifact.trained_through) : compactTime(artifact.modified_at)
-  return `${artifact.model_name} / ${artifact.artifact_kind} / trained ${trained} / acc ${formatPercent(artifact.direction_accuracy)} / return ${formatPercent(artifact.cumulative_return)}`
-}
-
-function modelStatus(artifact: ModelArtifact) {
-  if (artifact.archived) return 'archived'
-  if (!artifact.active) return 'inactive'
-  if (artifact.stale) return 'stale'
-  return 'active'
-}
-
-function firstJsonValue(value: unknown) {
-  if (value === null || value === undefined) return '-'
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
-  return JSON.stringify(value)
-}
-
-function statusClass(value: string | boolean | null | undefined) {
-  if (value === true || value === 'ok' || value === 'approved' || value === 'filled' || value === 'up') return 'good'
-  if (value === false || value === 'rejected' || value === 'failed' || value === 'down') return 'bad'
-  return 'neutral'
-}
-
-function Metric({
-  label,
-  value,
-  subvalue,
-  icon,
-}: {
-  label: string
-  value: string
-  subvalue?: string
-  icon: ReactNode
-}) {
-  return (
-    <div className="metric">
-      <div className="metric-head">
-        {icon}
-        <span>{label}</span>
-      </div>
-      <strong>{value}</strong>
-      {subvalue ? <small>{subvalue}</small> : null}
-    </div>
-  )
-}
-
-function Panel({
-  title,
-  icon,
-  children,
-  action,
-}: {
-  title: string
-  icon?: ReactNode
-  children: ReactNode
-  action?: ReactNode
-}) {
-  return (
-    <section className="panel">
-      <header className="panel-header">
-        <div>
-          {icon}
-          <h2>{title}</h2>
-        </div>
-        {action}
-      </header>
-      {children}
-    </section>
-  )
-}
-
-function EmptyState({ message }: { message: string }) {
-  return <div className="empty">{message}</div>
-}
-
-function MutationResult({ title, data, error }: { title: string; data?: unknown; error?: Error | null }) {
-  if (!data && !error) return null
-  return (
-    <div className="result-block">
-      <h3>{title}</h3>
-      <pre>{error ? error.message : JSON.stringify(data, null, 2)}</pre>
-    </div>
-  )
-}
-
-function CoverageResult({ data }: { data?: DataCoverageResponse }) {
-  if (!data) return null
-  const rows = [
-    ['OHLCV', data.ohlcv.covered_ranges.length, data.ohlcv.missing_ranges.length],
-    ['Indicators', data.indicators.covered_ranges.length, data.indicators.missing_ranges.length],
-    ['Features', data.features.covered_ranges.length, data.features.missing_ranges.length],
-  ] as const
-  return (
-    <div className="coverage-block">
-      {rows.map(([label, covered, missing]) => (
-        <div key={label}>
-          <span>{label}</span>
-          <strong>{covered} covered / {missing} gaps</strong>
-        </div>
-      ))}
-      {data.ohlcv.missing_ranges.length ? (
-        <div className="coverage-detail">
-          <span>First OHLCV Gap</span>
-          <strong>{`${formatTime(data.ohlcv.missing_ranges[0].start)} -> ${formatTime(data.ohlcv.missing_ranges[0].end)}`}</strong>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function DecisionsTable({
-  rows,
-  onOpenPrompt,
-}: {
-  rows: DecisionRow[]
-  onOpenPrompt: (id: number) => void
-}) {
-  if (!rows.length) return <EmptyState message="No decisions found." />
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Action</th>
-            <th>Confidence</th>
-            <th>Request</th>
-            <th>Risk</th>
-            <th>Execution</th>
-            <th>Order</th>
-            <th>LLM</th>
-            <th>Latency</th>
-            <th>Violations</th>
-            <th>Reason</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id}>
-              <td>{compactTime(row.reference_time)}</td>
-              <td>
-                <span className={`badge ${statusClass(row.action)}`}>{row.action}</span>
-              </td>
-              <td>{formatPercent(row.confidence)}</td>
-              <td>
-                {row.requested_usdt_amount
-                  ? `$${formatNumber(row.requested_usdt_amount, 2)}`
-                  : row.requested_quantity
-                    ? formatNumber(row.requested_quantity, 8)
-                    : '-'}
-              </td>
-              <td>
-                <span className={`badge ${statusClass(row.risk_status)}`}>{row.risk_status}</span>
-              </td>
-              <td>{row.execution_status}</td>
-              <td>{row.exchange_order_id ?? '-'}</td>
-              <td>{row.llm.model ?? '-'}</td>
-              <td>{row.llm.latency_seconds ? `${formatNumber(row.llm.latency_seconds, 2)}s` : '-'}</td>
-              <td className="truncate">{row.risk_violations.length ? firstJsonValue(row.risk_violations[0]) : '-'}</td>
-              <td className="truncate">{row.reason || '-'}</td>
-              <td className="actions">
-                <button type="button" className="icon-button" title="View prompt" onClick={() => onOpenPrompt(row.id)}>
-                  <Eye size={16} />
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function PredictionsTable({ rows }: { rows: PredictionRow[] }) {
-  if (!rows.length) return <EmptyState message="No predictions found." />
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Model</th>
-            <th>Kind</th>
-            <th>Horizon</th>
-            <th>Target</th>
-            <th>Direction</th>
-            <th>Ref</th>
-            <th>Pred</th>
-            <th>Pred Return</th>
-            <th>Actual</th>
-            <th>Settled</th>
-            <th>Correct</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id}>
-              <td>{compactTime(row.reference_time)}</td>
-              <td>{row.model_name}</td>
-              <td>{row.artifact_kind}</td>
-              <td>{row.forecast_horizon}</td>
-              <td>{row.target_mode}</td>
-              <td>
-                <span className={`badge ${statusClass(row.predicted_direction)}`}>{row.predicted_direction}</span>
-              </td>
-              <td>{formatNumber(row.reference_value, 2)}</td>
-              <td>{formatNumber(row.predicted_value, 2)}</td>
-              <td>{formatPercent(row.predicted_return)}</td>
-              <td>{formatPercent(row.actual_return)}</td>
-              <td>{row.settled_at ? compactTime(row.settled_at) : '-'}</td>
-              <td>
-                <span className={`badge ${statusClass(row.direction_correct)}`}>
-                  {row.direction_correct === null ? 'pending' : row.direction_correct ? 'yes' : 'no'}
-                </span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-function RiskList({ summary }: { summary: DashboardSummary }) {
-  const risk = summary.operational_risk
-  const position = summary.position
-  return (
-    <div className="kv-grid">
-      <div>
-        <span>Position</span>
-        <strong>{position.status}</strong>
-      </div>
-      <div>
-        <span>Quantity</span>
-        <strong>{formatNumber(position.quantity, 8)}</strong>
-      </div>
-      <div>
-        <span>Avg Entry</span>
-        <strong>{position.average_entry_price ? `$${formatNumber(position.average_entry_price, 2)}` : '-'}</strong>
-      </div>
-      <div>
-        <span>Exposure</span>
-        <strong>{position.current_exposure_usdt ? `$${formatNumber(position.current_exposure_usdt, 2)}` : '-'}</strong>
-      </div>
-      <div>
-        <span>Unrealized PnL</span>
-        <strong className={position.unrealized_pnl_usdt && position.unrealized_pnl_usdt < 0 ? 'text-bad' : 'text-good'}>
-          {position.unrealized_pnl_usdt ? `$${formatNumber(position.unrealized_pnl_usdt, 2)}` : '-'}
-        </strong>
-      </div>
-      <div>
-        <span>Cooldown</span>
-        <strong>{risk.cooldown_active ? 'active' : 'clear'}</strong>
-      </div>
-      <div>
-        <span>Orders Today</span>
-        <strong>{risk.orders_today}</strong>
-      </div>
-      <div>
-        <span>Realized Today</span>
-        <strong>{`$${formatNumber(risk.realized_pnl_today_usdt, 2)}`}</strong>
-      </div>
-    </div>
-  )
-}
-
-function SystemHealthPanel({
-  health,
-  summary,
-}: {
-  health?: HealthResponse
-  summary?: DashboardSummary
-}) {
-  const binance = health?.binance_demo
-  const llm = health?.llm_provider
-  return (
-    <Panel title="System Health" icon={<Shield size={17} />}>
-      <div className="kv-grid">
-        <div>
-          <span>API</span>
-          <strong>{health?.api ?? health?.status ?? '-'}</strong>
-        </div>
-        <div>
-          <span>Database</span>
-          <strong>{health?.database ?? '-'}</strong>
-        </div>
-        <div>
-          <span>Binance Demo</span>
-          <strong>{binance?.status ?? '-'}</strong>
-        </div>
-        <div>
-          <span>LLM Provider</span>
-          <strong>{llm?.status ?? '-'}</strong>
-        </div>
-        <div>
-          <span>LLM Model</span>
-          <strong>{llm?.model ?? '-'}</strong>
-        </div>
-        <div>
-          <span>Latest Candle Age</span>
-          <strong>{formatAge(summary?.market.latest_candle_age_seconds)}</strong>
-        </div>
-        <div>
-          <span>Latest Indicator Age</span>
-          <strong>{formatAge(summary?.market.latest_indicator_age_seconds)}</strong>
-        </div>
-        <div>
-          <span>Symbol Count</span>
-          <strong>{health?.available_symbols_1m?.length ?? 0}</strong>
-        </div>
-      </div>
-    </Panel>
-  )
-}
-
-function IndicatorsPanel({ summary }: { summary?: DashboardSummary }) {
-  const indicators = Object.entries(summary?.market.indicators ?? {})
-  return (
-    <Panel title="Indicators" icon={<BarChart3 size={17} />}>
-      {summary ? (
-        <>
-          <div className="kv-grid">
-            <div>
-              <span>Ready</span>
-              <strong>{summary.market.indicator_ready ? 'yes' : 'no'}</strong>
-            </div>
-            <div>
-              <span>Latest Indicator</span>
-              <strong>{formatTime(summary.market.latest_indicator_time)}</strong>
-            </div>
-            <div>
-              <span>Age</span>
-              <strong>{formatAge(summary.market.latest_indicator_age_seconds)}</strong>
-            </div>
-            <div>
-              <span>Missing Outputs</span>
-              <strong>{summary.market.missing_indicator_outputs.length || '-'}</strong>
-            </div>
-          </div>
-          {summary.market.missing_indicator_outputs.length ? (
-            <div className="inline-note">{summary.market.missing_indicator_outputs.join(', ')}</div>
-          ) : null}
-          {indicators.length ? (
-            <div className="indicator-grid">
-              {indicators.map(([name, value]) => (
-                <div key={name}>
-                  <span>{name}</span>
-                  <strong>{value ?? '-'}</strong>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <EmptyState message="No indicators stored for the latest indicator timestamp." />
-          )}
-        </>
-      ) : (
-        <EmptyState message="Loading indicators..." />
-      )}
-    </Panel>
-  )
-}
-
-function PromptDrawer({ journalId, onClose }: { journalId: number; onClose: () => void }) {
-  const promptQuery = useQuery({
-    queryKey: ['prompt', journalId],
-    queryFn: () => getPrompt(journalId),
-  })
-
-  return (
-    <div className="drawer-backdrop" role="presentation" onClick={onClose}>
-      <aside className="drawer" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-        <header className="drawer-header">
-          <div>
-            <span>Decision #{journalId}</span>
-            <h2>LLM Prompt</h2>
-          </div>
-          <button type="button" className="icon-button" title="Close" onClick={onClose}>
-            <X size={18} />
-          </button>
-        </header>
-        {promptQuery.isLoading ? <EmptyState message="Loading prompt..." /> : null}
-        {promptQuery.error ? <EmptyState message={promptQuery.error.message} /> : null}
-        {promptQuery.data ? (
-          <div className="prompt-blocks">
-            <div>
-              <h3>Provider</h3>
-              <pre>{`${promptQuery.data.provider_host ?? '-'} / ${promptQuery.data.model ?? '-'}`}</pre>
-            </div>
-            <div>
-              <h3>System</h3>
-              <pre>{promptQuery.data.system_prompt ?? '-'}</pre>
-            </div>
-            <div>
-              <h3>User</h3>
-              <pre>{promptQuery.data.prompt ?? '-'}</pre>
-            </div>
-            <div>
-              <h3>Raw Response</h3>
-              <pre>{JSON.stringify(promptQuery.data.raw_response, null, 2)}</pre>
-            </div>
-          </div>
-        ) : null}
-      </aside>
-    </div>
-  )
-}
-
-function DatabaseMarketControls({
+function ManualSpotDemoPanel({
   symbol,
-  interval,
   onCompleted,
 }: {
   symbol: string
-  interval: string
   onCompleted: () => void
 }) {
-  const [symbolsText, setSymbolsText] = useState(symbol)
-  const [marketSymbol, setMarketSymbol] = useState(symbol)
-  const [marketInterval, setMarketInterval] = useState(interval)
-  const [start, setStart] = useState(defaultStart())
-  const [end, setEnd] = useState(defaultEnd())
-  const [marketMode, setMarketMode] = useState<'demo' | 'live'>('demo')
-  const [persistFetch, setPersistFetch] = useState(false)
-  const [ingestSource, setIngestSource] = useState<'rest' | 'dump' | 'dump-with-rest-tail'>('dump-with-rest-tail')
-  const [batchSize, setBatchSize] = useState(50000)
-  const [indicatorChunkSize, setIndicatorChunkSize] = useState(10000)
-  const [resumeIndicators, setResumeIndicators] = useState(true)
+  const [buyAmount, setBuyAmount] = useState(10)
+  const [sellQuantity, setSellQuantity] = useState(0.0001)
+  const [confirmBuy, setConfirmBuy] = useState(false)
+  const [confirmSell, setConfirmSell] = useState(false)
 
-  const initMutation = useMutation({
-    mutationFn: () => initDatabase({ symbols: symbolsText.split(',').map((item) => item.trim()).filter(Boolean) }),
+  const buyMutation = useMutation({
+    mutationFn: () => submitSpotDemoMarketBuy({ symbol, usdt_amount: buyAmount, confirm: confirmBuy }),
     onSuccess: onCompleted,
   })
-  const fetchMutation = useMutation({
-    mutationFn: () => {
-      const payload: FetchOhlcvRequest = {
-        symbol: marketSymbol,
-        interval: marketInterval,
-        start,
-        end,
-        mode: marketMode,
-        persist: persistFetch,
-        batch_size: batchSize,
-      }
-      return fetchOhlcv(payload)
-    },
-    onSuccess: onCompleted,
-  })
-  const ingestMutation = useMutation({
-    mutationFn: () => {
-      const payload: IngestOhlcvRequest = {
-        symbol: marketSymbol,
-        interval: marketInterval,
-        start,
-        end,
-        source: ingestSource,
-        mode: marketMode,
-        batch_size: batchSize,
-      }
-      return ingestOhlcv(payload)
-    },
-    onSuccess: onCompleted,
-  })
-  const coverageMutation = useMutation({
-    mutationFn: () => getDataCoverage({ symbol: marketSymbol, interval: marketInterval, start, end }),
-  })
-  const repairMutation = useMutation({
-    mutationFn: () => {
-      const payload: RepairOhlcvGapsRequest = {
-        symbol: marketSymbol,
-        interval: marketInterval,
-        start,
-        end,
-        mode: marketMode,
-        batch_size: batchSize,
-      }
-      return repairOhlcvGaps(payload)
-    },
-    onSuccess: onCompleted,
-  })
-  const indicatorBackfillMutation = useMutation({
-    mutationFn: () => {
-      const payload: BackfillIndicatorsRequest = {
-        symbol: marketSymbol,
-        interval: marketInterval,
-        start,
-        end,
-        chunk_candle_count: indicatorChunkSize,
-        resume_from_latest: resumeIndicators,
-      }
-      return backfillIndicators(payload)
-    },
+  const sellMutation = useMutation({
+    mutationFn: () => submitSpotDemoMarketSell({ symbol, quantity: sellQuantity, confirm: confirmSell }),
     onSuccess: onCompleted,
   })
 
   return (
-    <Panel title="Database And Market Data" icon={<Database size={17} />}>
-      <div className="control-grid three">
-        <form className="control-form" onSubmit={(event) => { event.preventDefault(); initMutation.mutate() }}>
-          <h3>Init DB</h3>
-          <label>
-            Symbols
-            <input value={symbolsText} onChange={(event) => setSymbolsText(event.target.value)} />
-          </label>
-          <button type="submit" disabled={initMutation.isPending}>Initialize</button>
-        </form>
-
-        <form className="control-form wide" onSubmit={(event) => { event.preventDefault(); fetchMutation.mutate() }}>
-          <h3>Fetch OHLCV</h3>
-          <div className="form-grid">
-            <label>Symbol<input value={marketSymbol} onChange={(event) => setMarketSymbol(event.target.value)} /></label>
-            <label>Interval<input value={marketInterval} onChange={(event) => setMarketInterval(event.target.value)} /></label>
-            <label>Mode<select value={marketMode} onChange={(event) => setMarketMode(event.target.value as 'demo' | 'live')}><option value="demo">demo</option><option value="live">live</option></select></label>
-            <label>Batch<input type="number" min="1" value={batchSize} onChange={(event) => setBatchSize(Number(event.target.value))} /></label>
-            <label>Start<input value={start} onChange={(event) => setStart(event.target.value)} /></label>
-            <label>End<input value={end} onChange={(event) => setEnd(event.target.value)} /></label>
-            <label className="check-row"><input type="checkbox" checked={persistFetch} onChange={(event) => setPersistFetch(event.target.checked)} />Persist fetched candles</label>
-          </div>
-          <button type="submit" disabled={fetchMutation.isPending}>Fetch</button>
-        </form>
-
-        <form className="control-form" onSubmit={(event) => { event.preventDefault(); ingestMutation.mutate() }}>
-          <h3>Ingest OHLCV</h3>
-          <label>
-            Source
-            <select value={ingestSource} onChange={(event) => setIngestSource(event.target.value as 'rest' | 'dump' | 'dump-with-rest-tail')}>
-              <option value="dump-with-rest-tail">dump-with-rest-tail</option>
-              <option value="dump">dump</option>
-              <option value="rest">rest</option>
-            </select>
-          </label>
-          <button type="submit" disabled={ingestMutation.isPending}>Ingest</button>
-        </form>
-
-        <form className="control-form" onSubmit={(event) => { event.preventDefault(); coverageMutation.mutate() }}>
-          <h3>Coverage</h3>
-          <button type="submit" disabled={coverageMutation.isPending}>Inspect Coverage</button>
-        </form>
-
-        <form className="control-form" onSubmit={(event) => { event.preventDefault(); repairMutation.mutate() }}>
-          <h3>Repair Gaps</h3>
-          <button type="submit" disabled={repairMutation.isPending}>Repair Missing OHLCV</button>
-        </form>
-
-        <form className="control-form" onSubmit={(event) => { event.preventDefault(); indicatorBackfillMutation.mutate() }}>
-          <h3>Backfill Indicators</h3>
-          <label>Chunk Size<input type="number" min="1" value={indicatorChunkSize} onChange={(event) => setIndicatorChunkSize(Number(event.target.value))} /></label>
-          <label className="check-row"><input type="checkbox" checked={resumeIndicators} onChange={(event) => setResumeIndicators(event.target.checked)} />Resume from latest</label>
-          <button type="submit" disabled={indicatorBackfillMutation.isPending}>Compute Indicators</button>
-        </form>
-      </div>
-      <CoverageResult data={coverageMutation.data} />
-      <MutationResult title="Init Result" data={initMutation.data} error={initMutation.error} />
-      <MutationResult title="Fetch Result" data={fetchMutation.data} error={fetchMutation.error} />
-      <MutationResult title="Ingest Result" data={ingestMutation.data} error={ingestMutation.error} />
-      <MutationResult title="Coverage Error" error={coverageMutation.error} />
-      <MutationResult title="Repair Result" data={repairMutation.data} error={repairMutation.error} />
-      <MutationResult title="Indicator Backfill Result" data={indicatorBackfillMutation.data} error={indicatorBackfillMutation.error} />
-    </Panel>
-  )
-}
-
-function PredictionControls({
-  symbol,
-  interval,
-  onCompleted,
-}: {
-  symbol: string
-  interval: string
-  onCompleted: () => void
-}) {
-  const [modelArtifact, setModelArtifact] = useState('experiments/results/<run_id>/model.pkl')
-  const [referenceTime, setReferenceTime] = useState('')
-  const [journalPrediction, setJournalPrediction] = useState(false)
-  const [settleUntil, setSettleUntil] = useState('')
-  const [settleLimit, setSettleLimit] = useState(1000)
-  const [summaryStart, setSummaryStart] = useState(defaultStart())
-  const [summaryEnd, setSummaryEnd] = useState(defaultEnd())
-  const [modelName, setModelName] = useState('')
-
-  const predictMutation = useMutation({
-    mutationFn: () => {
-      const payload: PredictRequest = {
-        symbol,
-        interval,
-        model_artifact: modelArtifact,
-        at: referenceTime.trim() || null,
-        journal: journalPrediction,
-      }
-      return runPrediction(payload)
-    },
-    onSuccess: onCompleted,
-  })
-  const settleMutation = useMutation({
-    mutationFn: () => {
-      const payload: SettlePredictionsRequest = {
-        symbol,
-        interval,
-        until: settleUntil.trim() || null,
-        limit: settleLimit,
-      }
-      return settlePredictions(payload)
-    },
-    onSuccess: onCompleted,
-  })
-  const summaryMutation = useMutation({
-    mutationFn: () => {
-      const payload: JournalSummaryRequest = {
-        symbol,
-        interval,
-        start: summaryStart,
-        end: summaryEnd,
-        model_name: modelName.trim() || null,
-      }
-      return summarizePredictionJournal(payload)
-    },
-  })
-
-  return (
-    <Panel title="Prediction Tools" icon={<BarChart3 size={17} />}>
-      <div className="control-grid three">
-        <form className="control-form wide" onSubmit={(event) => { event.preventDefault(); predictMutation.mutate() }}>
-          <h3>Run Prediction</h3>
-          <label>Model Artifact<input value={modelArtifact} onChange={(event) => setModelArtifact(event.target.value)} /></label>
-          <label>Reference Time<input placeholder="optional ISO timestamp" value={referenceTime} onChange={(event) => setReferenceTime(event.target.value)} /></label>
-          <label className="check-row"><input type="checkbox" checked={journalPrediction} onChange={(event) => setJournalPrediction(event.target.checked)} />Journal prediction</label>
-          <button type="submit" disabled={predictMutation.isPending}>Predict</button>
-        </form>
-
-        <form className="control-form" onSubmit={(event) => { event.preventDefault(); settleMutation.mutate() }}>
-          <h3>Settle Predictions</h3>
-          <label>Until<input placeholder="optional ISO timestamp" value={settleUntil} onChange={(event) => setSettleUntil(event.target.value)} /></label>
-          <label>Limit<input type="number" min="1" value={settleLimit} onChange={(event) => setSettleLimit(Number(event.target.value))} /></label>
-          <button type="submit" disabled={settleMutation.isPending}>Settle</button>
-        </form>
-
-        <form className="control-form" onSubmit={(event) => { event.preventDefault(); summaryMutation.mutate() }}>
-          <h3>Prediction Summary</h3>
-          <label>Start<input value={summaryStart} onChange={(event) => setSummaryStart(event.target.value)} /></label>
-          <label>End<input value={summaryEnd} onChange={(event) => setSummaryEnd(event.target.value)} /></label>
-          <label>Model Name<input placeholder="optional" value={modelName} onChange={(event) => setModelName(event.target.value)} /></label>
-          <button type="submit" disabled={summaryMutation.isPending}>Summarize</button>
-        </form>
-      </div>
-      <MutationResult title="Prediction Result" data={predictMutation.data} error={predictMutation.error} />
-      <MutationResult title="Settlement Result" data={settleMutation.data} error={settleMutation.error} />
-      <MutationResult title="Prediction Summary Result" data={summaryMutation.data} error={summaryMutation.error} />
-    </Panel>
-  )
-}
-
-function AgentActionControls({
-  symbol,
-  interval,
-  onCompleted,
-}: {
-  symbol: string
-  interval: string
-  onCompleted: () => void
-}) {
-  const [policy, setPolicy] = useState<'threshold' | 'llm'>('threshold')
-  const [mode, setMode] = useState<'dry-run' | 'spot-demo'>('dry-run')
-  const [showPrompt, setShowPrompt] = useState(false)
-  const [dryRunUsdt, setDryRunUsdt] = useState(1000)
-  const [dryRunBase, setDryRunBase] = useState(0)
-  const [minReturn, setMinReturn] = useState(0.0005)
-  const [agentSummaryStart, setAgentSummaryStart] = useState(defaultStart())
-  const [agentSummaryEnd, setAgentSummaryEnd] = useState(defaultEnd())
-
-  const runMutation = useMutation({
-    mutationFn: () => {
-      const payload: AgentRunOnceRequest = {
-        symbol: policy === 'threshold' ? symbol : null,
-        interval,
-        mode,
-        policy,
-        show_prompt: showPrompt,
-        dry_run_usdt_balance: dryRunUsdt,
-        dry_run_base_asset_balance: dryRunBase,
-        max_trade_usdt: 25,
-        max_position_usdt: 100,
-        min_predicted_return: minReturn,
-        prediction_staleness_minutes: 5,
-        emergency_stop: false,
-        max_daily_realized_loss_usdt: 50,
-        max_orders_per_day: 20,
-        order_cooldown_minutes: 5,
-        max_total_exposure_usdt: 100,
-      }
-      return runAgentOnce(payload)
-    },
-    onSuccess: onCompleted,
-  })
-  const summaryMutation = useMutation({
-    mutationFn: () => summarizeAgentJournal({ symbol, interval, start: agentSummaryStart, end: agentSummaryEnd }),
-  })
-
-  return (
-    <Panel title="Agent Actions" icon={<Activity size={17} />}>
+    <Panel title="Manual Spot Demo Orders" icon={<ShoppingCart size={17} />}>
       <div className="control-grid">
-        <form className="control-form" onSubmit={(event) => { event.preventDefault(); runMutation.mutate() }}>
-          <h3>Run Agent Once</h3>
-          <div className="form-grid">
-            <label>Policy<select value={policy} onChange={(event) => setPolicy(event.target.value as 'threshold' | 'llm')}><option value="threshold">threshold</option><option value="llm">llm</option></select></label>
-            <label>Mode<select value={mode} onChange={(event) => setMode(event.target.value as 'dry-run' | 'spot-demo')}><option value="dry-run">dry-run</option><option value="spot-demo">spot-demo</option></select></label>
-            <label>Dry USDT<input type="number" min="0" value={dryRunUsdt} onChange={(event) => setDryRunUsdt(Number(event.target.value))} /></label>
-            <label>Dry Base<input type="number" min="0" value={dryRunBase} onChange={(event) => setDryRunBase(Number(event.target.value))} /></label>
-            <label>Min Return<input type="number" step="0.0001" value={minReturn} onChange={(event) => setMinReturn(Number(event.target.value))} /></label>
-            <label className="check-row"><input type="checkbox" checked={showPrompt} onChange={(event) => setShowPrompt(event.target.checked)} />Show LLM prompt</label>
-          </div>
-          <button type="submit" disabled={runMutation.isPending}>Run Agent</button>
-        </form>
-
-        <form className="control-form" onSubmit={(event) => { event.preventDefault(); summaryMutation.mutate() }}>
-          <h3>Agent Summary</h3>
-          <label>Start<input value={agentSummaryStart} onChange={(event) => setAgentSummaryStart(event.target.value)} /></label>
-          <label>End<input value={agentSummaryEnd} onChange={(event) => setAgentSummaryEnd(event.target.value)} /></label>
-          <button type="submit" disabled={summaryMutation.isPending}>Summarize Agent</button>
-        </form>
-      </div>
-      <MutationResult title="Agent Result" data={runMutation.data} error={runMutation.error} />
-      <MutationResult title="Agent Summary Result" data={summaryMutation.data} error={summaryMutation.error} />
-    </Panel>
-  )
-}
-
-function ModelRegistryPanel({
-  artifacts,
-  isLoading,
-  error,
-  onRefresh,
-}: {
-  artifacts: ModelArtifact[]
-  isLoading: boolean
-  error: Error | null
-  onRefresh: () => void
-}) {
-  const queryClient = useQueryClient()
-  const [modelTypeFilter, setModelTypeFilter] = useState('all')
-  const [statusFilter, setStatusFilter] = useState('all')
-  const stateMutation = useMutation({
-    mutationFn: updateModelArtifactState,
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['model-artifacts'] })
-    },
-  })
-  const filtered = artifacts.filter((artifact) => {
-    const status = modelStatus(artifact)
-    return (modelTypeFilter === 'all' || artifact.model_type === modelTypeFilter)
-      && (statusFilter === 'all' || status === statusFilter)
-  })
-
-  return (
-    <Panel
-      title="Model Registry"
-      icon={<Archive size={17} />}
-      action={(
-        <button type="button" className="refresh-button" onClick={onRefresh} disabled={isLoading}>
-          <RefreshCw size={15} />
-          Refresh
-        </button>
-      )}
-    >
-      <div className="registry-toolbar">
-        <label>
-          Type
-          <select value={modelTypeFilter} onChange={(event) => setModelTypeFilter(event.target.value)}>
-            <option value="all">all</option>
-            <option value="tabular">tabular</option>
-            <option value="deep_learning">deep_learning</option>
-            <option value="statistical">statistical</option>
-            <option value="unknown">unknown</option>
-          </select>
-        </label>
-        <label>
-          Status
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-            <option value="all">all</option>
-            <option value="active">active</option>
-            <option value="stale">stale</option>
-            <option value="inactive">inactive</option>
-            <option value="archived">archived</option>
-          </select>
-        </label>
-      </div>
-      {error ? <div className="inline-error">{error.message}</div> : null}
-      {!filtered.length ? (
-        <EmptyState message={isLoading ? 'Loading model registry...' : 'No model artifacts match the filters.'} />
-      ) : (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Model</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Trained</th>
-                <th>Accuracy</th>
-                <th>RMSE</th>
-                <th>MAPE</th>
-                <th>Return</th>
-                <th>Trades</th>
-                <th>Path</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((artifact) => (
-                <tr key={artifact.artifact_path}>
-                  <td>{artifact.model_name}</td>
-                  <td>{artifact.model_type}</td>
-                  <td><span className={`badge ${statusClass(modelStatus(artifact) === 'active')}`}>{modelStatus(artifact)}</span></td>
-                  <td>{compactTime(artifact.trained_through ?? artifact.modified_at)}</td>
-                  <td>{formatPercent(artifact.direction_accuracy)}</td>
-                  <td>{formatNumber(artifact.rmse, 3)}</td>
-                  <td>{formatPercent(artifact.mape)}</td>
-                  <td>{formatPercent(artifact.cumulative_return)}</td>
-                  <td>{artifact.trade_count ?? '-'}</td>
-                  <td className="truncate">{artifact.artifact_path}</td>
-                  <td className="actions">
-                    <button
-                      type="button"
-                      className="icon-button"
-                      title={artifact.active ? 'Mark inactive' : 'Mark active'}
-                      onClick={() => stateMutation.mutate({ artifact_path: artifact.artifact_path, active: !artifact.active })}
-                    >
-                      <PowerGlyph active={artifact.active} />
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-button"
-                      title={artifact.archived ? 'Unarchive' : 'Archive'}
-                      onClick={() => stateMutation.mutate({ artifact_path: artifact.artifact_path, archived: !artifact.archived })}
-                    >
-                      <Archive size={15} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <MutationResult title="Registry Update" data={stateMutation.data} error={stateMutation.error} />
-    </Panel>
-  )
-}
-
-function PowerGlyph({ active }: { active: boolean }) {
-  return active ? <Square size={14} /> : <Play size={14} />
-}
-
-function buildTrainingConfig({
-  trainingType,
-  modelName,
-  symbol,
-  interval,
-  start,
-  calibration,
-  split,
-  end,
-  forecastHorizon,
-  buyThreshold,
-}: {
-  trainingType: TrainingType
-  modelName: string
-  symbol: string
-  interval: string
-  start: string
-  calibration: string
-  split: string
-  end: string
-  forecastHorizon: number
-  buyThreshold: number
-}) {
-  if (trainingType === 'deep_learning') {
-    return {
-      symbol,
-      interval,
-      model_name: modelName,
-      start_time: start,
-      split_time: split,
-      end_time: end,
-      sequence_length: 60,
-      forecast_horizon: forecastHorizon,
-      target_field: 'close',
-      target_mode: 'return',
-      scaler: 'zscore',
-      artifacts_dir: 'experiments/results',
-      model_parameters: {
-        hidden_size: 32,
-        num_layers: 1,
-        dropout: 0,
-        learning_rate: 0.001,
-        batch_size: 128,
-        max_epochs: 5,
-        weight_decay: 0,
-        seed: 42,
-        device: 'auto',
-      },
-      backtest: {
-        starting_cash: 10000,
-        buy_threshold: buyThreshold,
-        commission_rate: 0.001,
-        cash_fraction: 0.95,
-      },
-    }
-  }
-  if (trainingType === 'statistical') {
-    return {
-      description: `Dashboard ${modelName} walk-forward training.`,
-      init_schema: false,
-      symbol,
-      interval,
-      model_name: modelName,
-      model_parameters: modelName === 'arima'
-        ? { order: [1, 0, 0], fit_kwargs: {} }
-        : { daily_seasonality: true, weekly_seasonality: false, yearly_seasonality: false },
-      target_field: 'close',
-      window_size: modelName === 'arima' ? 720 : 240,
-      forecast_horizon: forecastHorizon,
-      start_time: start,
-      end_time: end,
-      validation_size: 1,
-      step_size: 240,
-      required_features: [],
-      artifacts_dir: 'experiments/results',
-      backtest: {
-        enabled: true,
-        starting_cash: 10000,
-        buy_threshold: buyThreshold,
-      },
-    }
-  }
-  return {
-    description: `Dashboard ${modelName} production training.`,
-    symbol,
-    interval,
-    model_name: modelName,
-    model_parameters: modelName === 'lightgbm'
-      ? {
-          n_estimators: 120,
-          max_depth: 4,
-          learning_rate: 0.05,
-          subsample: 0.8,
-          colsample_bytree: 0.9,
-          objective: 'regression',
-          random_state: 42,
-          n_jobs: -1,
-          verbosity: -1,
-        }
-      : {
-          n_estimators: 100,
-          max_depth: 4,
-          learning_rate: 0.05,
-          subsample: 0.8,
-          colsample_bytree: 0.9,
-          objective: 'reg:squarederror',
-          tree_method: 'hist',
-          random_state: 42,
-          n_jobs: -1,
-        },
-    target_field: 'close',
-    target_mode: 'return',
-    forecast_horizon: forecastHorizon,
-    start_time: start,
-    calibration_time: calibration,
-    split_time: split,
-    end_time: end,
-    required_features: [],
-    starting_cash: 10000,
-    buy_threshold: buyThreshold,
-    commission_rate: 0.001,
-    cash_fraction: 0.95,
-    artifacts_dir: 'experiments/results',
-  }
-}
-
-function firstPresetModelName(config: Record<string, unknown>, fallback: string) {
-  if (typeof config.model_name === 'string') return config.model_name
-  const models = Array.isArray(config.models) ? config.models : []
-  const firstModel = models.find((item): item is Record<string, unknown> => item !== null && typeof item === 'object')
-  return typeof firstModel?.model_name === 'string' ? firstModel.model_name : fallback
-}
-
-function applyTrainingFormValues(
-  config: Record<string, unknown>,
-  {
-    modelName,
-    symbol,
-    interval,
-    start,
-    calibration,
-    split,
-    end,
-    forecastHorizon,
-    buyThreshold,
-  }: {
-    modelName: string
-    symbol: string
-    interval: string
-    start: string
-    calibration: string
-    split: string
-    end: string
-    forecastHorizon: number
-    buyThreshold: number
-  },
-) {
-  const next: Record<string, unknown> = {
-    ...config,
-    symbol,
-    interval,
-    start_time: start,
-    end_time: end,
-    forecast_horizon: forecastHorizon,
-  }
-  const models = Array.isArray(next.models) ? next.models : null
-  if (models) {
-    const selectedModels = models.filter(
-      (item) => item !== null && typeof item === 'object' && (item as Record<string, unknown>).model_name === modelName,
-    )
-    if (selectedModels.length) {
-      next.models = selectedModels
-    }
-  } else if ('model_name' in next) {
-    next.model_name = modelName
-  }
-  if ('split_time' in next) next.split_time = split
-  if ('calibration_time' in next) next.calibration_time = calibration
-  const backtest = next.backtest
-  if (backtest && typeof backtest === 'object' && !Array.isArray(backtest)) {
-    next.backtest = { ...backtest, buy_threshold: buyThreshold }
-  } else {
-    next.buy_threshold = buyThreshold
-  }
-  return next
-}
-
-function TrainingPanel({
-  symbol,
-  interval,
-  onCompleted,
-}: {
-  symbol: string
-  interval: string
-  onCompleted: () => void
-}) {
-  const queryClient = useQueryClient()
-  const [trainingType, setTrainingType] = useState<TrainingType>('tabular')
-  const [modelName, setModelName] = useState('xgboost')
-  const [trainSymbol, setTrainSymbol] = useState(symbol)
-  const [trainInterval, setTrainInterval] = useState(interval)
-  const [start, setStart] = useState('2023-03-24T14:00:00Z')
-  const [calibration, setCalibration] = useState('2026-05-15T22:32:00Z')
-  const [split, setSplit] = useState('2026-05-25T00:00:00Z')
-  const [end, setEnd] = useState(defaultEnd())
-  const [forecastHorizon, setForecastHorizon] = useState(15)
-  const [buyThreshold, setBuyThreshold] = useState(0.0002)
-  const [selectedPresetPath, setSelectedPresetPath] = useState('')
-  const [selectedPresetConfig, setSelectedPresetConfig] = useState<Record<string, unknown> | null>(null)
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
-
-  const presetsQuery = useQuery({
-    queryKey: ['training-presets'],
-    queryFn: getTrainingPresets,
-  })
-  const jobsQuery = useQuery({
-    queryKey: ['training-jobs'],
-    queryFn: getTrainingJobs,
-    refetchInterval: 5_000,
-  })
-  const selectedJobQuery = useQuery({
-    queryKey: ['training-job', selectedJobId],
-    queryFn: () => getTrainingJob(String(selectedJobId)),
-    enabled: selectedJobId !== null,
-    refetchInterval: selectedJobId ? 3_000 : false,
-  })
-  const generatedConfig = useMemo(() => {
-    if (selectedPresetConfig) {
-      return applyTrainingFormValues(selectedPresetConfig, {
-        modelName,
-        symbol: trainSymbol,
-        interval: trainInterval,
-        start,
-        calibration,
-        split,
-        end,
-        forecastHorizon,
-        buyThreshold,
-      })
-    }
-    return buildTrainingConfig({
-      trainingType,
-      modelName,
-      symbol: trainSymbol,
-      interval: trainInterval,
-      start,
-      split,
-      calibration,
-      end,
-      forecastHorizon,
-      buyThreshold,
-    })
-  }, [buyThreshold, calibration, end, forecastHorizon, modelName, selectedPresetConfig, split, start, trainInterval, trainSymbol, trainingType])
-  const createMutation = useMutation({
-    mutationFn: () => createTrainingJob({
-      training_type: trainingType,
-      name: `${trainSymbol}-${trainInterval}-${modelName}`,
-      config: generatedConfig,
-    }),
-    onSuccess: (data) => {
-      setSelectedJobId(data.job.id)
-      queryClient.invalidateQueries({ queryKey: ['training-jobs'] })
-      queryClient.invalidateQueries({ queryKey: ['model-artifacts'] })
-      onCompleted()
-    },
-  })
-  const cancelMutation = useMutation({
-    mutationFn: (jobId: string) => cancelTrainingJob(jobId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['training-jobs'] })
-      queryClient.invalidateQueries({ queryKey: ['training-job'] })
-    },
-  })
-
-  const availableModels = trainingType === 'deep_learning'
-    ? ['lstm', 'gru']
-    : trainingType === 'statistical'
-      ? ['arima', 'prophet']
-      : ['xgboost', 'lightgbm']
-  const jobs = jobsQuery.data?.jobs ?? []
-  const selectedJob = selectedJobQuery.data?.job ?? jobs.find((job) => job.id === selectedJobId)
-
-  return (
-    <Panel title="Training UI" icon={<Cpu size={17} />}>
-      <div className="control-grid three">
-        <form className="control-form wide" onSubmit={(event) => { event.preventDefault(); createMutation.mutate() }}>
-          <h3>Train Model</h3>
-          <div className="form-grid">
-            <label>
-              Preset
-              <select
-                value={selectedPresetPath}
-                onChange={(event) => {
-                  setSelectedPresetPath(event.target.value)
-                  if (!event.target.value) {
-                    setSelectedPresetConfig(null)
-                    return
-                  }
-                  const preset = presetsQuery.data?.presets.find((item) => item.path === event.target.value)
-                  if (!preset) return
-                  const fallbackModelName = preset.training_type === 'deep_learning' ? 'lstm' : preset.training_type === 'statistical' ? 'arima' : 'xgboost'
-                  setTrainingType(preset.training_type)
-                  setModelName(firstPresetModelName(preset.config, fallbackModelName))
-                  setTrainSymbol(String(preset.symbol ?? trainSymbol))
-                  setTrainInterval(String(preset.interval ?? trainInterval))
-                  setStart(String(preset.config.start_time ?? start))
-                  setCalibration(String(preset.config.calibration_time ?? preset.config.split_time ?? calibration))
-                  setSplit(String(preset.config.split_time ?? split))
-                  setEnd(String(preset.config.end_time ?? end))
-                  setForecastHorizon(Number(preset.config.forecast_horizon ?? forecastHorizon))
-                  const backtest = preset.config.backtest as Record<string, unknown> | undefined
-                  setBuyThreshold(Number(backtest?.buy_threshold ?? preset.config.buy_threshold ?? buyThreshold))
-                  setSelectedPresetConfig(preset.config)
-                }}
-              >
-                <option value="">manual builder</option>
-                {(presetsQuery.data?.presets ?? []).map((preset) => (
-                  <option key={preset.path} value={preset.path}>{`${preset.training_type} / ${preset.name}`}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Type
-              <select
-                value={trainingType}
-                onChange={(event) => {
-                  const next = event.target.value as TrainingType
-                  setSelectedPresetPath('')
-                  setSelectedPresetConfig(null)
-                  setTrainingType(next)
-                  setModelName(next === 'deep_learning' ? 'lstm' : next === 'statistical' ? 'arima' : 'xgboost')
-                }}
-              >
-                <option value="tabular">tabular</option>
-                <option value="deep_learning">deep_learning</option>
-                <option value="statistical">statistical</option>
-              </select>
-            </label>
-            <label>Model<select value={modelName} onChange={(event) => setModelName(event.target.value)}>{availableModels.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-            <label>Symbol<input value={trainSymbol} onChange={(event) => setTrainSymbol(event.target.value)} /></label>
-            <label>Interval<input value={trainInterval} onChange={(event) => setTrainInterval(event.target.value)} /></label>
-            <label>Forecast Horizon<input type="number" min="1" value={forecastHorizon} onChange={(event) => setForecastHorizon(Number(event.target.value))} /></label>
-            <label>Buy Threshold<input type="number" step="0.0001" value={buyThreshold} onChange={(event) => setBuyThreshold(Number(event.target.value))} /></label>
-            <label>Start<input value={start} onChange={(event) => setStart(event.target.value)} /></label>
-            <label>Calibration<input value={calibration} onChange={(event) => setCalibration(event.target.value)} /></label>
-            <label>Split<input value={split} onChange={(event) => setSplit(event.target.value)} /></label>
-            <label>End<input value={end} onChange={(event) => setEnd(event.target.value)} /></label>
-          </div>
-          <button type="submit" disabled={createMutation.isPending}>
-            <Play size={15} />
-            Start Training
+        <form
+          className="control-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            buyMutation.mutate()
+          }}
+        >
+          <h3>Market Buy</h3>
+          <label>
+            USDT Amount
+            <input type="number" min="0.01" step="0.01" value={buyAmount} onChange={(event) => setBuyAmount(Number(event.target.value))} />
+          </label>
+          <label className="check-row">
+            <input type="checkbox" checked={confirmBuy} onChange={(event) => setConfirmBuy(event.target.checked)} />
+            Confirm buy
+          </label>
+          <button type="submit" disabled={!confirmBuy || buyMutation.isPending}>
+            Buy
           </button>
         </form>
 
-        <div className="control-form">
-          <h3>Generated Config</h3>
-          <pre>{JSON.stringify(generatedConfig, null, 2)}</pre>
-        </div>
+        <form
+          className="control-form"
+          onSubmit={(event) => {
+            event.preventDefault()
+            sellMutation.mutate()
+          }}
+        >
+          <h3>Market Sell</h3>
+          <label>
+            Quantity
+            <input type="number" min="0.00000001" step="0.00000001" value={sellQuantity} onChange={(event) => setSellQuantity(Number(event.target.value))} />
+          </label>
+          <label className="check-row">
+            <input type="checkbox" checked={confirmSell} onChange={(event) => setConfirmSell(event.target.checked)} />
+            Confirm sell
+          </label>
+          <button type="submit" disabled={!confirmSell || sellMutation.isPending}>
+            Sell
+          </button>
+        </form>
       </div>
-
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Created</th>
-              <th>Name</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>PID</th>
-              <th>Return</th>
-              <th>Config</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {jobs.map((job: TrainingJob) => (
-              <tr key={job.id}>
-                <td>{compactTime(job.created_at)}</td>
-                <td>{job.name}</td>
-                <td>{job.training_type}</td>
-                <td><span className={`badge ${statusClass(job.status === 'succeeded')}`}>{job.status}</span></td>
-                <td>{job.pid ?? '-'}</td>
-                <td>{job.return_code ?? '-'}</td>
-                <td className="truncate">{job.config_path}</td>
-                <td className="actions">
-                  <button type="button" className="icon-button" title="View logs" onClick={() => setSelectedJobId(job.id)}>
-                    <Eye size={15} />
-                  </button>
-                  {job.status === 'running' ? (
-                    <button type="button" className="icon-button" title="Cancel" onClick={() => cancelMutation.mutate(job.id)}>
-                      <X size={15} />
-                    </button>
-                  ) : null}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {!jobs.length ? <EmptyState message={jobsQuery.isFetching ? 'Loading training jobs...' : 'No dashboard training jobs in this API process.'} /> : null}
-      {selectedJob ? (
-        <div className="result-block">
-          <h3>{`Training Log / ${selectedJob.name}`}</h3>
-          <pre>{selectedJob.log ?? 'Loading log...'}</pre>
-        </div>
-      ) : null}
-      <MutationResult title="Training Result" data={createMutation.data} error={createMutation.error} />
-      <MutationResult title="Cancel Result" data={cancelMutation.data} error={cancelMutation.error} />
+      <MutationResult title="Buy Result" data={buyMutation.data} error={buyMutation.error} />
+      <MutationResult title="Sell Result" data={sellMutation.data} error={sellMutation.error} />
     </Panel>
   )
 }
@@ -1388,39 +104,24 @@ function App() {
   const [symbol, setSymbol] = useState('BTCUSDT')
   const [limit, setLimit] = useState(20)
   const [selectedPromptId, setSelectedPromptId] = useState<number | null>(null)
-  const [buyAmount, setBuyAmount] = useState(10)
-  const [sellQuantity, setSellQuantity] = useState(0.0001)
-  const [confirmBuy, setConfirmBuy] = useState(false)
-  const [confirmSell, setConfirmSell] = useState(false)
   const [liveMode, setLiveMode] = useState<'dry-run' | 'spot-demo'>('dry-run')
   const [marketDataMode, setMarketDataMode] = useState<'demo' | 'live'>('demo')
   const [selectedModelArtifacts, setSelectedModelArtifacts] = useState<{ key: string; paths: string[] } | null>(null)
   const [allowLargeGapRecovery, setAllowLargeGapRecovery] = useState(false)
   const [allowStaleModels, setAllowStaleModels] = useState(false)
 
-  const healthQuery = useQuery({
-    queryKey: ['health'],
-    queryFn: getHealth,
-    refetchInterval: 30_000,
-  })
-
-  const symbolsQuery = useQuery({
-    queryKey: ['symbols', interval],
-    queryFn: () => getSymbols(interval),
-  })
-
+  const healthQuery = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 })
+  const symbolsQuery = useQuery({ queryKey: ['symbols', interval], queryFn: () => getSymbols(interval) })
   const portfolioQuery = useQuery({
     queryKey: ['spot-demo-portfolio', symbol],
     queryFn: () => getSpotDemoPortfolio(symbol),
     refetchInterval: 30_000,
   })
-
   const summaryQuery = useQuery({
     queryKey: ['summary', symbol, interval, limit],
     queryFn: () => getDashboardSummary({ symbol, interval, limit, lookbackHours: 24 }),
     refetchInterval: 30_000,
   })
-
   const modelArtifactsQuery = useQuery({
     queryKey: ['model-artifacts', symbol, interval],
     queryFn: () => getModelArtifacts({ symbol, interval }),
@@ -1432,16 +133,6 @@ function App() {
     queryClient.invalidateQueries({ queryKey: ['spot-demo-portfolio'] })
     queryClient.invalidateQueries({ queryKey: ['model-artifacts'] })
   }
-
-  const buyMutation = useMutation({
-    mutationFn: () => submitSpotDemoMarketBuy({ symbol, usdt_amount: buyAmount, confirm: confirmBuy }),
-    onSuccess: refreshOperationalData,
-  })
-
-  const sellMutation = useMutation({
-    mutationFn: () => submitSpotDemoMarketSell({ symbol, quantity: sellQuantity, confirm: confirmSell }),
-    onSuccess: refreshOperationalData,
-  })
 
   const modelArtifactsResponse = modelArtifactsQuery.data
   const allModelArtifacts = useMemo(() => modelArtifactsResponse?.artifacts ?? [], [modelArtifactsResponse])
@@ -1458,35 +149,9 @@ function App() {
     [modelArtifactsResponse],
   )
   const artifactSelectionKey = `${symbol}:${interval}`
-  const effectiveSelectedModelArtifacts =
-    selectedModelArtifacts?.key === artifactSelectionKey
-      ? selectedModelArtifacts.paths.filter((path) => selectableArtifactPaths.has(path))
-      : latestModelArtifacts.map((artifact) => artifact.artifact_path)
-
-  const liveCycleMutation = useMutation({
-    mutationFn: () => {
-      const modelArtifacts = effectiveSelectedModelArtifacts.map((path) => `${symbol}=${path}`)
-      const payload: LiveCycleRequest = {
-        interval,
-        mode: liveMode,
-        model_artifacts: modelArtifacts,
-        market_data_mode: marketDataMode,
-        max_inline_gap_minutes: 180,
-        max_model_age_days: 3,
-        allow_large_gap_recovery: allowLargeGapRecovery,
-        allow_stale_models: allowStaleModels,
-        max_trade_usdt: 25,
-        max_position_usdt: 100,
-        emergency_stop: false,
-        max_daily_realized_loss_usdt: 50,
-        max_orders_per_day: 20,
-        order_cooldown_minutes: 5,
-        max_total_exposure_usdt: 100,
-      }
-      return runLiveCycleOnce(payload)
-    },
-    onSuccess: refreshOperationalData,
-  })
+  const effectiveSelectedModelArtifacts = selectedModelArtifacts?.key === artifactSelectionKey
+    ? selectedModelArtifacts.paths.filter((path) => selectableArtifactPaths.has(path))
+    : latestModelArtifacts.map((artifact) => artifact.artifact_path)
 
   const symbols = symbolsQuery.data?.symbols.length ? symbolsQuery.data.symbols : [symbol]
   const symbolStatusByName = useMemo(
@@ -1494,7 +159,6 @@ function App() {
     [symbolsQuery.data?.symbol_statuses],
   )
   const summary = summaryQuery.data
-
   const latestDecision = summary?.recent_decisions[0]
   const latestPrice = summary?.position.current_price ?? null
   const modelCount = useMemo(() => {
@@ -1532,14 +196,7 @@ function App() {
           </label>
           <label>
             Rows
-            <input
-              type="number"
-              min="5"
-              max="100"
-              step="5"
-              value={limit}
-              onChange={(event) => setLimit(Number(event.target.value))}
-            />
+            <input type="number" min="5" max="100" step="5" value={limit} onChange={(event) => setLimit(Number(event.target.value))} />
           </label>
           <button type="button" className="refresh-button" onClick={() => summaryQuery.refetch()}>
             <RefreshCw size={16} />
@@ -1604,7 +261,7 @@ function App() {
 
       <div className="main-grid">
         <Panel title="Position And Risk" icon={<Shield size={17} />}>
-          {summary ? <RiskList summary={summary} /> : <EmptyState message="Loading risk state..." />}
+          {summary ? <RiskList summary={summary} /> : <div className="empty">Loading risk state...</div>}
         </Panel>
 
         <Panel title="Market State" icon={<Wallet size={17} />}>
@@ -1636,7 +293,7 @@ function App() {
               </div>
             </div>
           ) : (
-            <EmptyState message="Loading market state..." />
+            <div className="empty">Loading market state...</div>
           )}
         </Panel>
       </div>
@@ -1665,155 +322,57 @@ function App() {
               </div>
             </div>
           ) : (
-            <EmptyState message={portfolioQuery.error ? portfolioQuery.error.message : 'Loading portfolio...'} />
+            <div className="empty">{portfolioQuery.error ? portfolioQuery.error.message : 'Loading portfolio...'}</div>
           )}
         </Panel>
 
-        <Panel title="Manual Spot Demo Orders" icon={<ShoppingCart size={17} />}>
-          <div className="control-grid">
-            <form
-              className="control-form"
-              onSubmit={(event) => {
-                event.preventDefault()
-                buyMutation.mutate()
-              }}
-            >
-              <h3>Market Buy</h3>
-              <label>
-                USDT Amount
-                <input type="number" min="0.01" step="0.01" value={buyAmount} onChange={(event) => setBuyAmount(Number(event.target.value))} />
-              </label>
-              <label className="check-row">
-                <input type="checkbox" checked={confirmBuy} onChange={(event) => setConfirmBuy(event.target.checked)} />
-                Confirm buy
-              </label>
-              <button type="submit" disabled={!confirmBuy || buyMutation.isPending}>
-                Buy
-              </button>
-            </form>
-
-            <form
-              className="control-form"
-              onSubmit={(event) => {
-                event.preventDefault()
-                sellMutation.mutate()
-              }}
-            >
-              <h3>Market Sell</h3>
-              <label>
-                Quantity
-                <input type="number" min="0.00000001" step="0.00000001" value={sellQuantity} onChange={(event) => setSellQuantity(Number(event.target.value))} />
-              </label>
-              <label className="check-row">
-                <input type="checkbox" checked={confirmSell} onChange={(event) => setConfirmSell(event.target.checked)} />
-                Confirm sell
-              </label>
-              <button type="submit" disabled={!confirmSell || sellMutation.isPending}>
-                Sell
-              </button>
-            </form>
-          </div>
-          <MutationResult title="Buy Result" data={buyMutation.data} error={buyMutation.error} />
-          <MutationResult title="Sell Result" data={sellMutation.data} error={sellMutation.error} />
-        </Panel>
+        <ManualSpotDemoPanel symbol={symbol} onCompleted={refreshOperationalData} />
       </div>
 
-      <Panel title="Run Agent Once" icon={<Play size={17} />}>
-        <form
-          className="run-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            liveCycleMutation.mutate()
-          }}
-        >
-          <div className="control-grid">
-            <label>
-              Trading Mode
-              <select value={liveMode} onChange={(event) => setLiveMode(event.target.value as 'dry-run' | 'spot-demo')}>
-                <option value="dry-run">dry-run</option>
-                <option value="spot-demo">spot-demo</option>
-              </select>
-            </label>
-            <label>
-              Market Data
-              <select value={marketDataMode} onChange={(event) => setMarketDataMode(event.target.value as 'demo' | 'live')}>
-                <option value="demo">demo</option>
-                <option value="live">live</option>
-              </select>
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={allowLargeGapRecovery} onChange={(event) => setAllowLargeGapRecovery(event.target.checked)} />
-              Allow large gap recovery
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={allowStaleModels} onChange={(event) => setAllowStaleModels(event.target.checked)} />
-              Allow stale models
-            </label>
-          </div>
-          <div className="artifact-selector">
-            <div className="artifact-selector-head">
-              <span>Model Artifacts</span>
-              <button type="button" onClick={() => modelArtifactsQuery.refetch()} disabled={modelArtifactsQuery.isFetching}>
-                <RefreshCw size={15} />
-                Refresh Models
-              </button>
-            </div>
-            {modelArtifactsQuery.error ? <div className="inline-error">{modelArtifactsQuery.error.message}</div> : null}
-            {!selectableModelArtifacts.length && !modelArtifactsQuery.error ? (
-              <EmptyState message={modelArtifactsQuery.isFetching ? 'Loading trained models...' : 'No active model artifacts found for this symbol and interval.'} />
-            ) : (
-              <div className="artifact-list">
-                {selectableModelArtifacts.map((artifact) => {
-                  const selected = effectiveSelectedModelArtifacts.includes(artifact.artifact_path)
-                  return (
-                    <label key={artifact.artifact_path} className="artifact-option">
-                      <input
-                        type="checkbox"
-                        checked={selected}
-                        onChange={(event) => {
-                          setSelectedModelArtifacts((current) => {
-                            const currentPaths =
-                              current?.key === artifactSelectionKey ? current.paths : effectiveSelectedModelArtifacts
-                            if (event.target.checked) {
-                              return {
-                                key: artifactSelectionKey,
-                                paths: currentPaths.includes(artifact.artifact_path)
-                                  ? currentPaths
-                                  : [...currentPaths, artifact.artifact_path],
-                              }
-                            }
-                            return {
-                              key: artifactSelectionKey,
-                              paths: currentPaths.filter((path) => path !== artifact.artifact_path),
-                            }
-                          })
-                        }}
-                      />
-                      <span>
-                        <strong>{artifactLabel(artifact)}</strong>
-                        <small>{artifact.artifact_path}</small>
-                      </span>
-                    </label>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-          <button type="submit" disabled={!effectiveSelectedModelArtifacts.length || liveCycleMutation.isPending}>
-            <Play size={15} />
-            Run Once
-          </button>
-        </form>
-        <MutationResult title="Run Result" data={liveCycleMutation.data} error={liveCycleMutation.error} />
-      </Panel>
+      <LiveCyclePanel
+        symbol={symbol}
+        interval={interval}
+        liveMode={liveMode}
+        marketDataMode={marketDataMode}
+        allowLargeGapRecovery={allowLargeGapRecovery}
+        allowStaleModels={allowStaleModels}
+        setLiveMode={setLiveMode}
+        setMarketDataMode={setMarketDataMode}
+        setAllowLargeGapRecovery={setAllowLargeGapRecovery}
+        setAllowStaleModels={setAllowStaleModels}
+        selectableModelArtifacts={selectableModelArtifacts as ModelArtifact[]}
+        effectiveSelectedModelArtifacts={effectiveSelectedModelArtifacts}
+        artifactSelectionKey={artifactSelectionKey}
+        setSelectedModelArtifacts={setSelectedModelArtifacts}
+        modelArtifactsQuery={{
+          refetch: () => {
+            void modelArtifactsQuery.refetch()
+          },
+          isFetching: modelArtifactsQuery.isFetching,
+          error: modelArtifactsQuery.error,
+        }}
+        onCompleted={refreshOperationalData}
+      />
 
-      <DatabaseMarketControls symbol={symbol} interval={interval} onCompleted={refreshOperationalData} />
-      <TrainingPanel symbol={symbol} interval={interval} onCompleted={refreshOperationalData} />
+      <DatabaseMarketControls
+        key={`data-controls:${symbol}:${interval}`}
+        symbol={symbol}
+        interval={interval}
+        onCompleted={refreshOperationalData}
+      />
+      <TrainingPanel
+        key={`training-panel:${symbol}:${interval}`}
+        symbol={symbol}
+        interval={interval}
+        onCompleted={refreshOperationalData}
+      />
       <ModelRegistryPanel
-        artifacts={allModelArtifacts}
+        artifacts={allModelArtifacts as ModelArtifact[]}
         isLoading={modelArtifactsQuery.isFetching}
         error={modelArtifactsQuery.error}
-        onRefresh={() => modelArtifactsQuery.refetch()}
+        onRefresh={() => {
+          void modelArtifactsQuery.refetch()
+        }}
       />
       <PredictionControls symbol={symbol} interval={interval} onCompleted={refreshOperationalData} />
       <AgentActionControls symbol={symbol} interval={interval} onCompleted={refreshOperationalData} />

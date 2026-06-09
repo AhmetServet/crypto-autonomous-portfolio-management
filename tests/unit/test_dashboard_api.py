@@ -211,7 +211,7 @@ class DashboardApiTests(unittest.TestCase):
 
     def test_agent_run_live_once_route_returns_cycle_payload(self) -> None:
         with patch(
-            "capm.api.app._build_live_cycle_service",
+            "capm.api.routers.trading._build_live_cycle_service",
             return_value=(FakeLiveCycle(), FakeClosable(), None, FakeLivePolicy()),
         ):
             response = self.client.post(
@@ -267,7 +267,7 @@ class DashboardApiTests(unittest.TestCase):
                 """
             )
 
-            with patch("capm.api.app.MODEL_RESULTS_DIR", results_dir):
+            with patch("capm.api.training_registry.MODEL_RESULTS_DIR", results_dir):
                 response = self.client.get("/api/model-artifacts?symbol=BTCUSDT&interval=1m")
 
         self.assertEqual(response.status_code, 200)
@@ -282,7 +282,7 @@ class DashboardApiTests(unittest.TestCase):
     def test_model_artifact_state_route_marks_artifact_inactive(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             state_path = Path(temp_dir) / "model_registry.json"
-            with patch("capm.api.app.MODEL_REGISTRY_STATE_PATH", state_path):
+            with patch("capm.api.training_registry.MODEL_REGISTRY_STATE_PATH", state_path):
                 response = self.client.post(
                     "/api/model-artifacts/state",
                     json={"artifact_path": "experiments/results/run/model.pkl", "active": False, "archived": True},
@@ -321,7 +321,7 @@ class DashboardApiTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch("capm.api.app.TRAINING_CONFIGS_DIR", configs_dir):
+            with patch("capm.api.training_registry.TRAINING_CONFIGS_DIR", configs_dir):
                 response = self.client.get("/api/training/presets")
 
         self.assertEqual(response.status_code, 200)
@@ -332,7 +332,7 @@ class DashboardApiTests(unittest.TestCase):
 
     def test_training_jobs_route_returns_current_jobs(self) -> None:
         with patch.dict(
-            "capm.api.app._TRAINING_JOBS",
+            "capm.api.training_registry.TRAINING_JOBS",
             {
                 "job-1": {
                     "id": "job-1",
@@ -357,7 +357,7 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(response.json()["jobs"][0]["id"], "job-1")
 
     def test_database_init_route_initializes_symbols(self) -> None:
-        with patch("capm.api.app.initialize_database", return_value=FakeRepository()) as initialize:
+        with patch("capm.api.routers.market.initialize_database", return_value=FakeRepository()) as initialize:
             response = self.client.post("/api/database/init", json={"symbols": ["BTCUSDT"]})
 
         self.assertEqual(response.status_code, 200)
@@ -373,7 +373,7 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
 
     def test_agent_journal_summary_route(self) -> None:
-        with patch("capm.api.app.build_repository", return_value=FakeRepository()):
+        with patch("capm.api.routers.trading.build_repository", return_value=FakeRepository()):
             response = self.client.post(
                 "/api/agent/journal/summary",
                 json={
@@ -388,7 +388,7 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(response.json()["summary"]["decision_count"], 0)
 
     def test_data_coverage_route_returns_coverage_and_gaps(self) -> None:
-        with patch("capm.api.app.build_repository", return_value=FakeRepository()):
+        with patch("capm.api.routers.market.build_repository", return_value=FakeRepository()):
             response = self.client.get(
                 "/api/data/coverage"
                 "?symbol=BTCUSDT&interval=1m&start=2026-06-01T00:00:00Z&end=2026-06-01T00:10:00Z"
@@ -413,8 +413,8 @@ class DashboardApiTests(unittest.TestCase):
         )
         fake_service = SimpleNamespace(backfill_feature_range=lambda **kwargs: result)
         with (
-            patch("capm.api.app.build_repository", return_value=FakeRepository()),
-            patch("capm.api.app.IndicatorPipelineService", return_value=fake_service),
+            patch("capm.api.routers.market.build_repository", return_value=FakeRepository()),
+            patch("capm.api.routers.market.IndicatorPipelineService", return_value=fake_service),
         ):
             response = self.client.post(
                 "/api/features/backfill-indicators",
