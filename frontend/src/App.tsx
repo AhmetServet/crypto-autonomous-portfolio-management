@@ -18,10 +18,13 @@ import { getDashboardSummary, getHealth, getModelArtifacts, getSpotDemoPortfolio
 import { AgentActionControls } from './dashboard/agent-controls'
 import { DatabaseMarketControls } from './dashboard/data-controls'
 import { INTERVALS, formatAge, formatNumber, formatPercent, formatTime } from './dashboard/format'
+import { LiveLoopPanel } from './dashboard/live-loop-panel'
 import { LiveCyclePanel } from './dashboard/live-cycle-panel'
 import { ModelRegistryPanel } from './dashboard/model-registry'
 import { PredictionControls } from './dashboard/prediction-controls'
 import { Metric, MutationResult, Panel } from './dashboard/primitives'
+import { RiskControlsPanel } from './dashboard/risk-controls'
+import { RISK_PRESETS, type RiskPreset, type RiskSettings } from './dashboard/risk-settings'
 import { IndicatorsPanel, PromptDrawer, RiskList, SystemHealthPanel } from './dashboard/summary'
 import { DecisionsTable, PredictionsTable } from './dashboard/tables'
 import { TrainingPanel } from './dashboard/training-panel'
@@ -109,6 +112,8 @@ function App() {
   const [selectedModelArtifacts, setSelectedModelArtifacts] = useState<{ key: string; paths: string[] } | null>(null)
   const [allowLargeGapRecovery, setAllowLargeGapRecovery] = useState(false)
   const [allowStaleModels, setAllowStaleModels] = useState(false)
+  const [riskPreset, setRiskPreset] = useState<RiskPreset>('normal')
+  const [riskSettings, setRiskSettings] = useState<RiskSettings>(RISK_PRESETS.normal)
 
   const healthQuery = useQuery({ queryKey: ['health'], queryFn: getHealth, refetchInterval: 30_000 })
   const symbolsQuery = useQuery({ queryKey: ['symbols', interval], queryFn: () => getSymbols(interval) })
@@ -132,6 +137,10 @@ function App() {
     queryClient.invalidateQueries({ queryKey: ['summary'] })
     queryClient.invalidateQueries({ queryKey: ['spot-demo-portfolio'] })
     queryClient.invalidateQueries({ queryKey: ['model-artifacts'] })
+  }
+  const applyRiskPreset = (preset: RiskPreset) => {
+    setRiskPreset(preset)
+    setRiskSettings(RISK_PRESETS[preset])
   }
 
   const modelArtifactsResponse = modelArtifactsQuery.data
@@ -258,6 +267,12 @@ function App() {
       </section>
 
       <SystemHealthPanel health={healthQuery.data} summary={summary} />
+      <RiskControlsPanel
+        preset={riskPreset}
+        settings={riskSettings}
+        onPresetChange={applyRiskPreset}
+        onSettingsChange={setRiskSettings}
+      />
 
       <div className="main-grid">
         <Panel title="Position And Risk" icon={<Shield size={17} />}>
@@ -351,6 +366,18 @@ function App() {
           isFetching: modelArtifactsQuery.isFetching,
           error: modelArtifactsQuery.error,
         }}
+        riskSettings={riskSettings}
+        onCompleted={refreshOperationalData}
+      />
+      <LiveLoopPanel
+        symbol={symbol}
+        interval={interval}
+        liveMode={liveMode}
+        marketDataMode={marketDataMode}
+        allowLargeGapRecovery={allowLargeGapRecovery}
+        allowStaleModels={allowStaleModels}
+        activeModelArtifacts={selectableModelArtifacts as ModelArtifact[]}
+        riskSettings={riskSettings}
         onCompleted={refreshOperationalData}
       />
 
@@ -374,8 +401,18 @@ function App() {
           void modelArtifactsQuery.refetch()
         }}
       />
-      <PredictionControls symbol={symbol} interval={interval} onCompleted={refreshOperationalData} />
-      <AgentActionControls symbol={symbol} interval={interval} onCompleted={refreshOperationalData} />
+      <PredictionControls
+        symbol={symbol}
+        interval={interval}
+        activeModelArtifacts={selectableModelArtifacts as ModelArtifact[]}
+        modelArtifactsLoading={modelArtifactsQuery.isFetching}
+        modelArtifactsError={modelArtifactsQuery.error}
+        onRefreshModels={() => {
+          void modelArtifactsQuery.refetch()
+        }}
+        onCompleted={refreshOperationalData}
+      />
+      <AgentActionControls symbol={symbol} interval={interval} riskSettings={riskSettings} onCompleted={refreshOperationalData} />
 
       <Panel title="Recent Decisions" icon={<Activity size={17} />}>
         <DecisionsTable rows={summary?.recent_decisions ?? []} onOpenPrompt={setSelectedPromptId} />

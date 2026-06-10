@@ -221,6 +221,14 @@ export type LiveCycleRequest = {
   max_total_exposure_usdt: number
 }
 
+export type LiveLoopRequest = LiveCycleRequest & {
+  cycle_offset_seconds: number
+  max_cycles: number | null
+  stop_after_error_count: number
+  sleep_after_error_seconds: number
+  name?: string | null
+}
+
 export type LiveCycleResponse = {
   status: string
   cycle_time: string
@@ -240,6 +248,35 @@ export type LiveCycleResponse = {
     execution_status: string
     journal_id: number
   }>
+}
+
+export type LiveLoop = {
+  id: string
+  name: string
+  status: string
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  return_code: number | null
+  pid: number | null
+  interval: string
+  mode: string
+  market_data_mode: string
+  max_cycles: number | null
+  cycle_offset_seconds: number
+  log_path: string
+  command: string[]
+  log?: string
+}
+
+export type LiveLoopsResponse = {
+  status: string
+  loops: LiveLoop[]
+}
+
+export type LiveLoopResponse = {
+  status: string
+  loop: LiveLoop
 }
 
 export type ModelArtifact = {
@@ -412,6 +449,57 @@ export type PredictRequest = {
   journal: boolean
 }
 
+export type PredictBatchRequest = {
+  model_artifacts: string[]
+  symbol: string
+  interval: string
+  at: string | null
+  journal: boolean
+}
+
+export type PredictionResult = {
+  artifact_path: string
+  artifact_kind: string
+  model_name: string
+  symbol: string
+  interval: string
+  reference_time: string
+  prediction_time: string
+  reference_value: number
+  predicted_value: number
+  predicted_return: number
+  forecast_horizon: number
+  target_mode: string
+  feature_names: string[]
+  metadata: Record<string, unknown>
+  feature_window: {
+    reference_time: string
+    prediction_time: string
+    forecast_horizon: number
+    feature_names: string[]
+    window_size: number
+  }
+  journal_id?: number
+}
+
+export type PredictResponse = {
+  status: string
+  prediction: PredictionResult
+}
+
+export type PredictBatchResponse = {
+  status: string
+  symbol: string
+  interval: string
+  reference_time: string | null
+  success_count: number
+  error_count: number
+  results: Array<
+    | { status: 'ok'; artifact_path: string; prediction: PredictionResult }
+    | { status: 'error'; artifact_path: string; error_type: string; reason: string }
+  >
+}
+
 export type SettlePredictionsRequest = {
   symbol: string
   interval: string
@@ -554,6 +642,27 @@ export function runLiveCycleOnce(request: LiveCycleRequest) {
   })
 }
 
+export function getLiveLoops() {
+  return fetchJson<LiveLoopsResponse>('/api/agent/loops')
+}
+
+export function getLiveLoop(loopId: string) {
+  return fetchJson<LiveLoopResponse>(`/api/agent/loops/${loopId}`)
+}
+
+export function startLiveLoop(request: LiveLoopRequest) {
+  return fetchJson<LiveLoopResponse>('/api/agent/loops', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function stopLiveLoop(loopId: string) {
+  return fetchJson<LiveLoopResponse>(`/api/agent/loops/${loopId}/stop`, {
+    method: 'POST',
+  })
+}
+
 export function initDatabase(request: InitDatabaseRequest) {
   return fetchJson<unknown>('/api/database/init', {
     method: 'POST',
@@ -600,7 +709,14 @@ export function backfillIndicators(request: BackfillIndicatorsRequest) {
 }
 
 export function runPrediction(request: PredictRequest) {
-  return fetchJson<unknown>('/api/predict', {
+  return fetchJson<PredictResponse>('/api/predict', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  })
+}
+
+export function runPredictionBatch(request: PredictBatchRequest) {
+  return fetchJson<PredictBatchResponse>('/api/predict/batch', {
     method: 'POST',
     body: JSON.stringify(request),
   })

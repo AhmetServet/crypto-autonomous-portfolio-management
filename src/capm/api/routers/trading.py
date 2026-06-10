@@ -22,7 +22,15 @@ from capm.services.llm_decision_policy import LLMDecisionPolicy
 from capm.services.trading_agent import TradingAgentService
 
 from ..dependencies import SpotDemoAdapterDependency
-from ..schemas import AgentRunOnceRequest, JournalSummaryRequest, LiveCycleRunOnceRequest, SpotDemoMarketBuyRequest, SpotDemoMarketSellRequest
+from ..loop_registry import create_loop_job, get_loop_job, list_loop_jobs, stop_loop_job
+from ..schemas import (
+    AgentRunOnceRequest,
+    JournalSummaryRequest,
+    LiveCycleLoopRequest,
+    LiveCycleRunOnceRequest,
+    SpotDemoMarketBuyRequest,
+    SpotDemoMarketSellRequest,
+)
 from ..shared import risk_args_from_request
 
 router = APIRouter()
@@ -186,3 +194,32 @@ def agent_run_live_once(request: LiveCycleRunOnceRequest) -> object:
         market_data_adapter.close()
         if exchange_adapter is not None:
             exchange_adapter.close()
+
+
+@router.get("/api/agent/loops")
+def agent_loops() -> object:
+    return jsonable_encoder(list_loop_jobs())
+
+
+@router.get("/api/agent/loops/{loop_id}")
+def agent_loop(loop_id: str) -> object:
+    payload = get_loop_job(loop_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"Live loop {loop_id} was not found.")
+    return jsonable_encoder(payload)
+
+
+@router.post("/api/agent/loops")
+def start_agent_loop(request: LiveCycleLoopRequest) -> object:
+    try:
+        return jsonable_encoder(create_loop_job(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/api/agent/loops/{loop_id}/stop")
+def stop_agent_loop(loop_id: str) -> object:
+    payload = stop_loop_job(loop_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail=f"Live loop {loop_id} was not found.")
+    return jsonable_encoder(payload)

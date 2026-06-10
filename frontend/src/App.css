@@ -504,6 +504,25 @@ tbody tr:hover {
   gap: 10px;
 }
 
+.kv-mini {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 12px;
+  font-size: 12px;
+}
+
+.kv-mini span {
+  color: #666;
+  font-weight: 700;
+}
+
+.kv-mini strong {
+  min-width: 0;
+  color: #111;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
 .control-form,
 .run-form {
   display: grid;

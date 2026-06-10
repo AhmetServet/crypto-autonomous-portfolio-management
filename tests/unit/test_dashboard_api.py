@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 import tempfile
 from pathlib import Path
@@ -134,6 +135,25 @@ class FakeLiveCycle:
         )()
 
 
+def _fake_worker_prediction(artifact_path: str) -> dict[str, object]:
+    return {
+        "artifact_path": artifact_path,
+        "artifact_kind": "production_tabular",
+        "model_name": "fake",
+        "symbol": "BTCUSDT",
+        "interval": "1m",
+        "reference_time": datetime(2026, 6, 7, 12, 0, tzinfo=UTC).isoformat(),
+        "prediction_time": datetime(2026, 6, 7, 12, 15, tzinfo=UTC).isoformat(),
+        "reference_value": 100.0,
+        "predicted_value": 101.0,
+        "predicted_return": 0.01,
+        "forecast_horizon": 15,
+        "target_mode": "return",
+        "feature_names": ["rsi_14_close"],
+        "metadata": {"target_field": "close"},
+    }
+
+
 class DashboardApiTests(unittest.TestCase):
     """Exercise GET routes for the React dashboard backend."""
 
@@ -226,6 +246,86 @@ class DashboardApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["status"], "ok")
         self.assertEqual(response.json()["symbols"], ["BTCUSDT"])
+
+    def test_agent_loop_routes_start_list_get_and_stop(self) -> None:
+        loop_payload = {
+            "status": "ok",
+            "loop": {
+                "id": "loop-1",
+                "name": "BTCUSDT-1m-dry-run",
+                "status": "running",
+                "created_at": "2026-06-10T00:00:00+00:00",
+                "started_at": "2026-06-10T00:00:01+00:00",
+                "finished_at": None,
+                "return_code": None,
+                "pid": 123,
+                "interval": "1m",
+                "mode": "dry-run",
+                "market_data_mode": "demo",
+                "max_cycles": 2,
+                "cycle_offset_seconds": 2,
+                "log_path": "experiments/results/dashboard_loops/loop-1/loop.log",
+                "command": ["capm", "agent", "run-loop"],
+                "log": "cycle output",
+            },
+        }
+        with (
+            patch("capm.api.routers.trading.create_loop_job", return_value=loop_payload) as create,
+            patch("capm.api.routers.trading.list_loop_jobs", return_value={"status": "ok", "loops": [loop_payload["loop"]]}),
+            patch("capm.api.routers.trading.get_loop_job", return_value=loop_payload),
+            patch("capm.api.routers.trading.stop_loop_job", return_value=loop_payload),
+        ):
+            start_response = self.client.post(
+                "/api/agent/loops",
+                json={
+                    "interval": "1m",
+                    "mode": "dry-run",
+                    "model_artifacts": ["BTCUSDT=experiments/results/run/model.pkl"],
+                    "max_cycles": 2,
+                },
+            )
+            list_response = self.client.get("/api/agent/loops")
+            get_response = self.client.get("/api/agent/loops/loop-1")
+            stop_response = self.client.post("/api/agent/loops/loop-1/stop")
+
+        self.assertEqual(start_response.status_code, 200)
+        self.assertEqual(list_response.json()["loops"][0]["id"], "loop-1")
+        self.assertEqual(get_response.json()["loop"]["log"], "cycle output")
+        self.assertEqual(stop_response.json()["loop"]["status"], "running")
+        self.assertEqual(create.call_args.args[0].max_cycles, 2)
+
+    def test_predict_batch_route_returns_per_artifact_results(self) -> None:
+        def fake_run(command, **kwargs):
+            artifact_path = command[command.index("--model-artifact") + 1]
+            if artifact_path.endswith("bad.pkl"):
+                return SimpleNamespace(
+                    returncode=1,
+                    stdout="",
+                    stderr="Feature row is not ready for prediction. missing_features=['rsi_14_close']",
+                )
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"status": "ok", "prediction": _fake_worker_prediction(artifact_path)}),
+                stderr="",
+            )
+
+        with patch("capm.api.routers.predictions.subprocess.run", side_effect=fake_run):
+            response = self.client.post(
+                "/api/predict/batch",
+                json={
+                    "symbol": "BTCUSDT",
+                    "interval": "1m",
+                    "model_artifacts": ["good.pkl", "bad.pkl"],
+                    "journal": False,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["success_count"], 1)
+        self.assertEqual(body["error_count"], 1)
+        self.assertEqual(body["results"][0]["prediction"]["feature_window"]["feature_names"], ["rsi_14_close"])
+        self.assertIn("missing_features", body["results"][1]["reason"])
 
     def test_model_artifacts_route_lists_latest_trained_models(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

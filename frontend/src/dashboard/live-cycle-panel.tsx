@@ -7,6 +7,7 @@ import type { LiveCycleRequest, ModelArtifact } from '../api'
 import { runLiveCycleOnce } from '../api'
 import { artifactLabel } from './format'
 import { EmptyState, MutationResult, Panel } from './primitives'
+import type { RiskSettings } from './risk-settings'
 
 export function LiveCyclePanel({
   symbol,
@@ -24,6 +25,7 @@ export function LiveCyclePanel({
   artifactSelectionKey,
   setSelectedModelArtifacts,
   modelArtifactsQuery,
+  riskSettings,
   onCompleted,
 }: {
   symbol: string
@@ -41,6 +43,7 @@ export function LiveCyclePanel({
   artifactSelectionKey: string
   setSelectedModelArtifacts: Dispatch<SetStateAction<{ key: string; paths: string[] } | null>>
   modelArtifactsQuery: { refetch: () => void; isFetching: boolean; error: Error | null }
+  riskSettings: RiskSettings
   onCompleted: () => void
 }) {
   const liveCycleMutation = useMutation({
@@ -55,13 +58,13 @@ export function LiveCyclePanel({
         max_model_age_days: 3,
         allow_large_gap_recovery: allowLargeGapRecovery,
         allow_stale_models: allowStaleModels,
-        max_trade_usdt: 25,
-        max_position_usdt: 100,
-        emergency_stop: false,
-        max_daily_realized_loss_usdt: 50,
-        max_orders_per_day: 20,
-        order_cooldown_minutes: 5,
-        max_total_exposure_usdt: 100,
+        max_trade_usdt: riskSettings.maxTradeUsdt,
+        max_position_usdt: riskSettings.maxPositionUsdt,
+        emergency_stop: riskSettings.emergencyStop,
+        max_daily_realized_loss_usdt: riskSettings.maxDailyLossUsdt,
+        max_orders_per_day: riskSettings.maxOrdersPerDay,
+        order_cooldown_minutes: riskSettings.cooldownMinutes,
+        max_total_exposure_usdt: riskSettings.maxExposureUsdt,
       }
       return runLiveCycleOnce(payload)
     },

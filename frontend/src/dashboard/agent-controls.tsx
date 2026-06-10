@@ -6,14 +6,17 @@ import type { AgentRunOnceRequest } from '../api'
 import { runAgentOnce, summarizeAgentJournal } from '../api'
 import { defaultEnd, defaultStart } from './format'
 import { MutationResult, Panel } from './primitives'
+import type { RiskSettings } from './risk-settings'
 
 export function AgentActionControls({
   symbol,
   interval,
+  riskSettings,
   onCompleted,
 }: {
   symbol: string
   interval: string
+  riskSettings: RiskSettings
   onCompleted: () => void
 }) {
   const [policy, setPolicy] = useState<'threshold' | 'llm'>('threshold')
@@ -21,7 +24,6 @@ export function AgentActionControls({
   const [showPrompt, setShowPrompt] = useState(false)
   const [dryRunUsdt, setDryRunUsdt] = useState(1000)
   const [dryRunBase, setDryRunBase] = useState(0)
-  const [minReturn, setMinReturn] = useState(0.0005)
   const [agentSummaryStart, setAgentSummaryStart] = useState(defaultStart())
   const [agentSummaryEnd, setAgentSummaryEnd] = useState(defaultEnd())
 
@@ -35,15 +37,15 @@ export function AgentActionControls({
         show_prompt: showPrompt,
         dry_run_usdt_balance: dryRunUsdt,
         dry_run_base_asset_balance: dryRunBase,
-        max_trade_usdt: 25,
-        max_position_usdt: 100,
-        min_predicted_return: minReturn,
-        prediction_staleness_minutes: 5,
-        emergency_stop: false,
-        max_daily_realized_loss_usdt: 50,
-        max_orders_per_day: 20,
-        order_cooldown_minutes: 5,
-        max_total_exposure_usdt: 100,
+        max_trade_usdt: riskSettings.maxTradeUsdt,
+        max_position_usdt: riskSettings.maxPositionUsdt,
+        min_predicted_return: riskSettings.minPredictedReturn,
+        prediction_staleness_minutes: riskSettings.predictionStalenessMinutes,
+        emergency_stop: riskSettings.emergencyStop,
+        max_daily_realized_loss_usdt: riskSettings.maxDailyLossUsdt,
+        max_orders_per_day: riskSettings.maxOrdersPerDay,
+        order_cooldown_minutes: riskSettings.cooldownMinutes,
+        max_total_exposure_usdt: riskSettings.maxExposureUsdt,
       }
       return runAgentOnce(payload)
     },
@@ -63,7 +65,6 @@ export function AgentActionControls({
             <label>Mode<select value={mode} onChange={(event) => setMode(event.target.value as 'dry-run' | 'spot-demo')}><option value="dry-run">dry-run</option><option value="spot-demo">spot-demo</option></select></label>
             <label>Dry USDT<input type="number" min="0" value={dryRunUsdt} onChange={(event) => setDryRunUsdt(Number(event.target.value))} /></label>
             <label>Dry Base<input type="number" min="0" value={dryRunBase} onChange={(event) => setDryRunBase(Number(event.target.value))} /></label>
-            <label>Min Return<input type="number" step="0.0001" value={minReturn} onChange={(event) => setMinReturn(Number(event.target.value))} /></label>
             <label className="check-row"><input type="checkbox" checked={showPrompt} onChange={(event) => setShowPrompt(event.target.checked)} />Show LLM prompt</label>
           </div>
           <button type="submit" disabled={runMutation.isPending}>Run Agent</button>

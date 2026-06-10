@@ -43,6 +43,16 @@ class LiveCycleRunOnceRequest(BaseModel):
     max_total_exposure_usdt: float = Field(default=100.0, gt=0)
 
 
+class LiveCycleLoopRequest(LiveCycleRunOnceRequest):
+    """Request body for a dashboard-managed continuous agent loop."""
+
+    cycle_offset_seconds: float = Field(default=2.0, ge=0)
+    max_cycles: int | None = Field(default=None, ge=1)
+    stop_after_error_count: int = Field(default=3, ge=1)
+    sleep_after_error_seconds: float = Field(default=10.0, ge=0)
+    name: str | None = None
+
+
 class InitDatabaseRequest(BaseModel):
     """Initialize database metadata and optional symbol tables."""
 
@@ -116,6 +126,16 @@ class PredictRequest(BaseModel):
     """Run one persisted model artifact against DB-backed data."""
 
     model_artifact: str = Field(min_length=1)
+    symbol: str = Field(min_length=1)
+    interval: str = Field(default="1m", min_length=1)
+    at: str | None = None
+    journal: bool = False
+
+
+class PredictBatchRequest(BaseModel):
+    """Run multiple persisted model artifacts against DB-backed data."""
+
+    model_artifacts: list[str] = Field(min_length=1)
     symbol: str = Field(min_length=1)
     interval: str = Field(default="1m", min_length=1)
     at: str | None = None
