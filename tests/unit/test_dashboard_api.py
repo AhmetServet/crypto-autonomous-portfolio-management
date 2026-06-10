@@ -44,6 +44,9 @@ class FakeDashboardService:
             "decisions": [],
         }
 
+    def orders(self, *, symbol: str, interval: str, limit: int):
+        return {"status": "ok", "symbol": symbol, "interval": interval, "limit": limit, "orders": []}
+
     def predictions(self, *, symbol: str, interval: str, limit: int):
         return {"status": "ok", "symbol": symbol, "interval": interval, "limit": limit, "predictions": []}
 
@@ -183,6 +186,7 @@ class DashboardApiTests(unittest.TestCase):
         paths = (
             "/api/symbols?interval=1m",
             "/api/agent/decisions?symbol=BTCUSDT&interval=1m&limit=10&include_prompts=true",
+            "/api/execution/orders?symbol=BTCUSDT&interval=1m&limit=10",
             "/api/predictions?symbol=BTCUSDT&interval=1m&limit=10",
             "/api/positions?symbol=BTCUSDT&interval=1m",
             "/api/risk/status?symbol=BTCUSDT",

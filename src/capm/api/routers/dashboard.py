@@ -59,6 +59,16 @@ def agent_decisions(
     )
 
 
+@router.get("/api/execution/orders")
+def execution_orders(
+    service: DashboardServiceDependency,
+    symbol: str = Query(default="BTCUSDT", min_length=1),
+    interval: str = Query(default="1m", min_length=1),
+    limit: int = Query(default=50, ge=1, le=500),
+) -> object:
+    return jsonable_encoder(service.orders(symbol=symbol, interval=interval, limit=limit))
+
+
 @router.get("/api/predictions")
 def predictions(
     service: DashboardServiceDependency,

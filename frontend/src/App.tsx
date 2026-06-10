@@ -21,6 +21,7 @@ import { INTERVALS, formatAge, formatNumber, formatPercent, formatTime } from '.
 import { LiveLoopPanel } from './dashboard/live-loop-panel'
 import { LiveCyclePanel } from './dashboard/live-cycle-panel'
 import { ModelRegistryPanel } from './dashboard/model-registry'
+import { ExecutionOrdersPanel } from './dashboard/orders-panel'
 import { PredictionControls } from './dashboard/prediction-controls'
 import { Metric, MutationResult, Panel } from './dashboard/primitives'
 import { RiskControlsPanel } from './dashboard/risk-controls'
@@ -417,6 +418,8 @@ function App() {
       <Panel title="Recent Decisions" icon={<Activity size={17} />}>
         <DecisionsTable rows={summary?.recent_decisions ?? []} onOpenPrompt={setSelectedPromptId} />
       </Panel>
+
+      <ExecutionOrdersPanel symbol={symbol} interval={interval} limit={limit} />
 
       <Panel title="Recent Predictions" icon={<BarChart3 size={17} />}>
         <PredictionsTable rows={summary?.recent_predictions ?? []} />

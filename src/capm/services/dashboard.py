@@ -207,6 +207,18 @@ class DashboardReportService:
             ],
         }
 
+    def orders(self, *, symbol: str, interval: str, limit: int) -> dict[str, object]:
+        """Return recent submitted Spot Demo orders with derived PnL."""
+        entries = self.repository.list_recent_agent_decision_journal_entries(symbol, interval, max(limit * 5, limit))
+        order_rows = self._order_rows(entries)
+        return {
+            "status": "ok",
+            "symbol": symbol,
+            "interval": interval,
+            "limit": limit,
+            "orders": order_rows[:limit],
+        }
+
     def position(self, *, symbol: str, interval: str) -> dict[str, object]:
         """Return current derived position state."""
         now = datetime.now(UTC)
@@ -418,3 +430,96 @@ class DashboardReportService:
                 else None
             ),
         }
+
+    @classmethod
+    def _order_rows(cls, entries: tuple[AgentDecisionJournalEntry, ...]) -> list[dict[str, object]]:
+        sorted_entries = sorted(
+            (entry for entry in entries if entry.mode == "spot_demo" and entry.exchange_order_id),
+            key=lambda item: item.created_at or item.reference_time,
+        )
+        inventory_quantity = 0.0
+        inventory_cost = 0.0
+        rows: list[dict[str, object]] = []
+        for entry in sorted_entries:
+            order = cls._resolved_exchange_order(entry.exchange_response)
+            if not order:
+                continue
+            executed_quantity = cls._float(order.get("executedQty"))
+            quote_quantity = cls._float(order.get("cummulativeQuoteQty"))
+            avg_price = quote_quantity / executed_quantity if executed_quantity > 0 else None
+            side = str(order.get("side") or entry.action).lower()
+            realized_pnl = None
+            realized_pnl_pct = None
+            if executed_quantity > 0 and quote_quantity > 0:
+                if side == "buy":
+                    inventory_quantity += executed_quantity
+                    inventory_cost += quote_quantity
+                elif side == "sell" and inventory_quantity > 0:
+                    sold_quantity = min(executed_quantity, inventory_quantity)
+                    allocated_cost = inventory_cost * (sold_quantity / inventory_quantity)
+                    sold_quote = quote_quantity * (sold_quantity / executed_quantity)
+                    realized_pnl = sold_quote - allocated_cost
+                    realized_pnl_pct = realized_pnl / allocated_cost if allocated_cost > 0 else None
+                    inventory_quantity -= sold_quantity
+                    inventory_cost -= allocated_cost
+            rows.append(
+                {
+                    "decision_journal_id": entry.id,
+                    "cycle_id": entry.cycle_id,
+                    "created_at": entry.created_at,
+                    "reference_time": entry.reference_time,
+                    "symbol": entry.symbol,
+                    "interval": entry.interval,
+                    "action": entry.action,
+                    "decision_reason": entry.reason,
+                    "risk_status": entry.risk_status,
+                    "execution_status": entry.execution_status,
+                    "exchange_order_id": entry.exchange_order_id,
+                    "exchange_client_order_id": entry.exchange_client_order_id,
+                    "side": side,
+                    "order_status": str(order.get("status") or entry.execution_status).lower(),
+                    "order_type": order.get("type"),
+                    "executed_quantity": executed_quantity,
+                    "quote_quantity": quote_quantity,
+                    "average_price": avg_price,
+                    "realized_pnl_usdt": realized_pnl,
+                    "realized_pnl_pct": realized_pnl_pct,
+                    "commission": cls._commission_payload(order),
+                    "raw_order": order,
+                }
+            )
+        return list(reversed(rows))
+
+    @staticmethod
+    def _float(value: object) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    @classmethod
+    def _commission_payload(cls, order: dict[str, Any]) -> dict[str, float]:
+        totals: dict[str, float] = {}
+        fills = order.get("fills")
+        if not isinstance(fills, list):
+            return totals
+        for fill in fills:
+            if not isinstance(fill, dict):
+                continue
+            asset = str(fill.get("commissionAsset") or "").strip()
+            if not asset:
+                continue
+            totals[asset] = totals.get(asset, 0.0) + cls._float(fill.get("commission"))
+        return totals
+
+    @staticmethod
+    def _resolved_exchange_order(exchange_response: dict[str, Any]) -> dict[str, Any]:
+        if not exchange_response:
+            return {}
+        reconciliation = exchange_response.get("reconciliation")
+        if isinstance(reconciliation, dict):
+            return reconciliation
+        submission = exchange_response.get("submission")
+        if isinstance(submission, dict):
+            return submission
+        return exchange_response

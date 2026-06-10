@@ -203,6 +203,39 @@ export type ManualOrderResponse = {
   portfolio_after: Portfolio
 }
 
+export type ExecutionOrderRow = {
+  decision_journal_id: number | null
+  cycle_id: string
+  created_at: string | null
+  reference_time: string
+  symbol: string
+  interval: string
+  action: string
+  decision_reason: string
+  risk_status: string
+  execution_status: string
+  exchange_order_id: string | null
+  exchange_client_order_id: string | null
+  side: string
+  order_status: string
+  order_type: string | null
+  executed_quantity: number
+  quote_quantity: number
+  average_price: number | null
+  realized_pnl_usdt: number | null
+  realized_pnl_pct: number | null
+  commission: Record<string, number>
+  raw_order: Record<string, unknown>
+}
+
+export type ExecutionOrdersResponse = {
+  status: string
+  symbol: string
+  interval: string
+  limit: number
+  orders: ExecutionOrderRow[]
+}
+
 export type LiveCycleRequest = {
   interval: string
   mode: 'dry-run' | 'spot-demo'
@@ -578,6 +611,15 @@ export function getPrompt(journalId: number) {
 
 export function getSpotDemoPortfolio(symbol: string) {
   return fetchJson<PortfolioResponse>(`/api/spot-demo/portfolio?symbol=${encodeURIComponent(symbol)}`)
+}
+
+export function getExecutionOrders(params: { symbol: string; interval: string; limit?: number }) {
+  const query = new URLSearchParams({
+    symbol: params.symbol,
+    interval: params.interval,
+    limit: String(params.limit ?? 50),
+  })
+  return fetchJson<ExecutionOrdersResponse>(`/api/execution/orders?${query.toString()}`)
 }
 
 export function getModelArtifacts(params: { symbol: string; interval: string; limit?: number }) {
