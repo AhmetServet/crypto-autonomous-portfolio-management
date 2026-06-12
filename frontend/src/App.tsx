@@ -31,6 +31,7 @@ import { RISK_PRESETS, type RiskPreset, type RiskSettings } from './dashboard/ri
 import { IndicatorsPanel, PromptDrawer, RiskList, SystemHealthPanel } from './dashboard/summary'
 import { DecisionsTable, PredictionsTable } from './dashboard/tables'
 import { TrainingPanel } from './dashboard/training-panel'
+import { ModelCards, SkeletonRows, VisualSummaryRail } from './dashboard/visual-widgets'
 
 type DashboardTab = 'overview' | 'trade' | 'agent' | 'data' | 'models' | 'journal'
 
@@ -351,11 +352,14 @@ function App() {
         </section>
 
         {activeTab === 'overview' ? (
-          <div className="tab-grid overview-grid">
-            <DashboardChartsPanel symbol={symbol} interval={interval} />
+          <div className="tab-grid overview-grid upgraded-overview-grid">
+            <div className="overview-main-stack">
+              <DashboardChartsPanel symbol={symbol} interval={interval} />
+              <VisualSummaryRail summary={summary} artifacts={selectableModelArtifacts as ModelArtifact[]} settings={riskSettings} />
+            </div>
             <div className="side-stack">
               <Panel title="Position And Risk" icon={<Shield size={17} />}>
-                {summary ? <RiskList summary={summary} /> : <div className="empty">Loading risk state...</div>}
+                {summary ? <RiskList summary={summary} /> : <SkeletonRows count={4} />}
               </Panel>
               <Panel title="Market State" icon={<Wallet size={17} />}>
                 {summary ? (
@@ -456,6 +460,9 @@ function App() {
 
         {activeTab === 'models' ? (
           <div className="tab-grid models-grid">
+            <Panel title="Active Model Cards" icon={<Database size={17} />}>
+              <ModelCards artifacts={selectableModelArtifacts as ModelArtifact[]} />
+            </Panel>
             <TrainingPanel key={`training-panel:${symbol}:${interval}`} symbol={symbol} interval={interval} onCompleted={refreshOperationalData} />
             <PredictionControls
               symbol={symbol}

@@ -13,6 +13,7 @@ import {
   type ChartData,
   type ChartDataset,
   type ChartOptions,
+  type Plugin,
   type TooltipItem,
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
@@ -52,6 +53,7 @@ export function DashboardChartsPanel({
 
   const chartData = useMemo(() => buildChartData(chartsQuery.data), [chartsQuery.data])
   const priceChart = useMemo(() => buildPriceChart(chartData), [chartData])
+  const candlestickPlugin = useMemo(() => buildCandlestickPlugin(chartData), [chartData])
   const indicatorChart = useMemo(() => buildIndicatorChart(chartData), [chartData])
   const pnlChart = useMemo(() => buildPnlChart(chartsQuery.data), [chartsQuery.data])
 
@@ -79,7 +81,7 @@ export function DashboardChartsPanel({
         <div className="charts-grid">
           <ChartFrame title="Price / Decisions" icon={<TrendingUp size={16} />}>
             <div className="chart-canvas chart-canvas-main">
-              <Line data={priceChart} options={priceChartOptions} />
+              <Line data={priceChart} options={priceChartOptions} plugins={[candlestickPlugin]} />
             </div>
           </ChartFrame>
 
@@ -151,13 +153,53 @@ function buildChartData(payload?: DashboardChartsResponse): ChartPoint[] {
 function buildPriceChart(points: ChartPoint[]): ChartData<'line', Array<number | null>, string> {
   const labels = points.map((point) => String(point.time))
   const datasets: ChartDatasetExtra[] = [
-    lineDataset('close', points, '#f4c744', 2.5),
+    lineDataset('close', points, '#f4c744', 1.4),
     ...PRICE_INDICATOR_KEYS.filter((key) => hasNumber(points, key)).map((key, index) => lineDataset(key, points, indicatorStroke(index), 1.2, index % 2 === 1)),
     markerDataset('buy', points, '#00d084', 'triangle', 18, 0),
     markerDataset('sell', points, '#ff5b5b', 'triangle', 18, 180),
     markerDataset('hold', points, '#d8e2ea', 'circle', 12, 0),
   ]
   return { labels, datasets }
+}
+
+function buildCandlestickPlugin(points: ChartPoint[]): Plugin<'line'> {
+  return {
+    id: 'capmCandlesticks',
+    beforeDatasetsDraw(chart) {
+      const { ctx, chartArea, scales } = chart
+      const xScale = scales.x
+      const yScale = scales.y
+      if (!xScale || !yScale || !chartArea || points.length < 2) return
+      const candleWidth = Math.max(2, Math.min(8, (chartArea.width / points.length) * 0.55))
+      ctx.save()
+      ctx.lineWidth = 1
+      points.forEach((point, index) => {
+        const open = numericOrNull(point.open)
+        const high = numericOrNull(point.high)
+        const low = numericOrNull(point.low)
+        const close = numericOrNull(point.close)
+        if (open === null || high === null || low === null || close === null) return
+        const x = xScale.getPixelForValue(index)
+        const highY = yScale.getPixelForValue(high)
+        const lowY = yScale.getPixelForValue(low)
+        const openY = yScale.getPixelForValue(open)
+        const closeY = yScale.getPixelForValue(close)
+        const up = close >= open
+        const color = up ? '#00d084' : '#ff5b5b'
+        ctx.strokeStyle = color
+        ctx.fillStyle = up ? 'rgb(0 208 132 / 28%)' : 'rgb(255 91 91 / 30%)'
+        ctx.beginPath()
+        ctx.moveTo(x, highY)
+        ctx.lineTo(x, lowY)
+        ctx.stroke()
+        const bodyTop = Math.min(openY, closeY)
+        const bodyHeight = Math.max(2, Math.abs(openY - closeY))
+        ctx.fillRect(x - candleWidth / 2, bodyTop, candleWidth, bodyHeight)
+        ctx.strokeRect(x - candleWidth / 2, bodyTop, candleWidth, bodyHeight)
+      })
+      ctx.restore()
+    },
+  }
 }
 
 function buildIndicatorChart(points: ChartPoint[]): ChartData<'line', Array<number | null>, string> {
