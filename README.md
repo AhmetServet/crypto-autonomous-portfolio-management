@@ -14,6 +14,10 @@ The first implementation slice now includes a Python package under `src/capm` fo
 - Binance market-data LLD: `docs/lld/binance_spot_market_data/lld.md`
 - Data-store LLD: `docs/lld/data_store/lld.md`
 - Prediction-model LLD: `docs/lld/prediction_models/lld.md`
+- Deep-learning LLD: `docs/lld/deep_learning/lld.md`
+- Prediction-journal LLD: `docs/lld/prediction_models/prediction_journal.md`
+- Spot Demo trading-agent LLD: `docs/lld/trading_agent/spot_demo_trading_agent.md`
+- Dashboard LLD: `docs/lld/dashboard/lld.md`
 
 ### Setup
 ```bash
@@ -297,24 +301,50 @@ uv run capm agent report \
 
 The report includes the latest candle and indicator row, current derived position state, recent prediction-journal rows, recent agent decisions, prediction and decision summaries over the last 24 hours, and the current symbol-scoped operational-risk snapshot. Add `--include-prompts` to include stored LLM prompt metadata, and `--include-spot-demo` to read current Spot Demo balances.
 
-Run the read-only dashboard API:
+Run the dashboard API:
 
 ```bash
 uv run capm-api --host 127.0.0.1 --port 8000
 ```
+
+Swagger/OpenAPI is available at `http://127.0.0.1:8000/docs`.
 
 The dashboard API exposes:
 
 - `GET /api/health`
 - `GET /api/symbols?interval=1m`
 - `GET /api/dashboard/summary?symbol=BTCUSDT&interval=1m`
+- `GET /api/charts/dashboard?symbol=BTCUSDT&interval=1m&lookback_hours=24`
 - `GET /api/agent/decisions?symbol=BTCUSDT&interval=1m&limit=50`
+- `GET /api/execution/orders?symbol=BTCUSDT&interval=1m&limit=50`
 - `GET /api/predictions?symbol=BTCUSDT&interval=1m&limit=100`
 - `GET /api/positions?symbol=BTCUSDT&interval=1m`
 - `GET /api/risk/status?symbol=BTCUSDT`
 - `GET /api/llm/prompts/<journal_id>`
 - `GET /api/spot-demo/portfolio?symbol=BTCUSDT`
+- `GET /api/model-artifacts?symbol=BTCUSDT&interval=1m`
+- `GET /api/training/presets`
+- `GET /api/training/jobs`
+- `GET /api/training/jobs/<job_id>`
+- `GET /api/data/coverage?symbol=BTCUSDT&interval=1m`
+- `GET /api/agent/loops`
+- `GET /api/agent/loops/<loop_id>`
+- `POST /api/agent/run-once`
 - `POST /api/agent/run-live-once`
+- `POST /api/agent/loops`
+- `POST /api/agent/loops/<loop_id>/stop`
+- `POST /api/predict`
+- `POST /api/predict/batch`
+- `POST /api/predictions/settle`
+- `POST /api/prediction-journal/summary`
+- `POST /api/database/init`
+- `POST /api/market/fetch-ohlcv`
+- `POST /api/market/ingest-ohlcv`
+- `POST /api/market/repair-ohlcv-gaps`
+- `POST /api/features/backfill-indicators`
+- `POST /api/training/jobs`
+- `POST /api/training/jobs/<job_id>/cancel`
+- `POST /api/model-artifacts/state`
 - `POST /api/spot-demo/market-buy`
 - `POST /api/spot-demo/market-sell`
 
@@ -335,6 +365,22 @@ npm run dev
 ```
 
 The frontend expects the API at `http://127.0.0.1:8000` by default. Override it with `VITE_CAPM_API_BASE_URL` when needed.
+
+Current dashboard capabilities:
+- Overview: health, freshness, position/risk, Chart.js price chart with candlestick-style OHLC overlay, buy/sell/hold markers, indicator chart, realized PnL curve, live status beacon, risk meters, active model cards, and decision timeline.
+- Trade: Spot Demo portfolio, confirmed manual market buy/sell, recent execution orders, raw order drawer, and realized PnL columns.
+- Agent: shared runtime configuration, risk presets/limits, run-once, continuous live loop start/stop, loop logs, and manual agent action controls.
+- Data: database init, OHLCV fetch/ingest, data coverage, gap repair, and indicator backfill.
+- Models: training presets, generated config preview, training job queue/logs/cancel, active model cards, prediction runtime tools, prediction settlement, prediction summary, and model registry state controls.
+- Journal: recent decisions, recent predictions, execution orders, prompt drawer, and raw LLM responses.
+
+Frontend quality checks:
+
+```bash
+cd frontend
+npm run lint
+npm run build
+```
 
 Summarize recorded decisions:
 

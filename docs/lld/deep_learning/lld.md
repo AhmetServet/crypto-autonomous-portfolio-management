@@ -51,6 +51,8 @@ Included in scope:
 - Backtrader holdout evaluation using the same signal policy as other models
 - experiment configs under `experiments/configs/`
 - focused unit tests for sequence shaping, scaling, target alignment, artifact validation, and runtime prediction
+- dashboard training preset support for LSTM and GRU
+- dashboard model-registry discovery and active/inactive artifact selection
 
 Out of scope for this slice:
 - DRL models
@@ -124,6 +126,12 @@ Registry changes:
 - add model names `lstm` and `gru`
 - add a new model family, likely `deep_learning`
 - keep old statistical and tabular behavior unchanged
+
+Current runtime integration:
+- `capm-train-deep-learning` writes `model.pkl` and `summary.json`
+- `PredictionRuntimeService` loads saved deep-learning sequence artifacts
+- live-cycle prediction runs artifacts in isolated worker processes to avoid loading PyTorch and other native ML runtimes into the agent parent process
+- the dashboard can start LSTM/GRU training jobs from presets, list artifacts, and pass active deep-learning artifacts into run-once or live-loop agent flows
 
 ## 6. Data Source And Window Contract
 Deep-learning models use the canonical DB-backed feature rows:

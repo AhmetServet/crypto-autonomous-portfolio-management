@@ -58,11 +58,10 @@ Included in scope:
 
 Out of scope:
 - live Binance mainnet execution
-- automatic per-minute scheduler
+- production-grade external scheduler
 - nightly retraining orchestration
 - portfolio optimization across all top-20 symbols
 - full LLM prompt optimization
-- UI/API endpoints
 - advanced order types beyond simple spot market or limit order intents
 - exchange websocket account streams
 - profit-and-loss attribution for completed strategies
@@ -605,11 +604,11 @@ Future branches should add:
 - scan-universe batch cycle across inventory and top-20 watchlist
 - provider-specific prompt tuning and optional additional LLM adapters
 - prompt and response journal for AI decisions
-- per-minute scheduler with lock and timeout handling
+- durable external scheduler with persisted loop/job state
 - account websocket stream for execution updates
 - portfolio snapshots and realized PnL attribution
 - strategy-level backtest replay using the same decision policy
-- dashboard/API views for decision journals and risk events
+- account-wide dashboard views for decision journals and risk events
 
 ## 19.1 Current Implementation Status
 Implemented in the first dry-run foundation:
@@ -695,6 +694,15 @@ Implemented in the observability-report step:
 - include symbol-scoped operational-risk state
 - derive current position quantity, average entry price, exposure, and unrealized PnL from filled Spot Demo journal rows
 - optionally include stored LLM prompts and current Spot Demo balances
+
+Implemented in the dashboard/API step:
+- expose FastAPI endpoints for health, symbols, summary, chart data, decisions, predictions, positions, risk status, prompts, execution orders, and Spot Demo portfolio
+- expose manual Spot Demo market buy/sell endpoints that require `confirm: true`
+- expose run-once and live-cycle endpoints
+- expose continuous loop start/stop/status/log endpoints
+- expose dashboard-native controls for runtime mode, market-data mode, large-gap recovery, stale-model override, and risk settings
+- expose recent Spot Demo execution orders with linked decision IDs, exchange order IDs, fill status, quote quantity, average price, realized PnL, commission, and raw order details
+- render buy/sell/hold markers, realized PnL curve, position state, operational risk meters, model cards, and recent decision timeline in the React dashboard
 
 Current valuation limitations:
 - exposure, daily order count, cooldown, and realized PnL are symbol-scoped until account-wide multi-coin controls are added

@@ -43,23 +43,25 @@ Why:
 - Strong consistency for trading-critical flows
 - Still scalable with internal concurrency and clear module ownership
 
-### 3.2 Django REST for Interface Layer
+### 3.2 FastAPI REST for Interface Layer
 
-Use Django + DRF only for API/interface concerns.
+The current interface layer uses FastAPI through the `capm-api` console script.
 
 Why:
 
-- Mature ecosystem for authentication/admin/API concerns
-- Good fit for dashboard integration and operational endpoints
-- Stable long-term framework with many integrations
+- Lightweight operational API for the local dashboard
+- Automatic OpenAPI/Swagger documentation with minimal framework overhead
+- Good fit for command-style endpoints such as ingestion, training jobs, predictions, and agent control
+- Keeps the backend close to the existing service and repository layer
 
 Constraint:
 
-- Domain logic must not live in views/serializers.
+- Domain logic must not live in routers or request schemas.
+- Routers should remain thin composition boundaries around services.
 
 ### 3.3 SQLAlchemy for Persistence Layer
 
-Use SQLAlchemy + Alembic for domain persistence, independent from Django ORM.
+Use SQLAlchemy for domain persistence, independent from the API framework.
 
 Why:
 
@@ -85,15 +87,10 @@ Future path:
 
 ```text
 .
-├─ apps/
-│  ├─ api/                            # Django project (REST interface)
-│  │  ├─ manage.py
-│  │  ├─ config/                      # settings, urls, asgi/wsgi
-│  │  └─ api/                         # DRF views/serializers/controllers
-│  └─ worker/                         # APScheduler runtime entrypoint
-│     └─ run_worker.py
+├─ frontend/                          # React dashboard
 ├─ src/
 │  └─ capm/
+│     ├─ api/                         # FastAPI app, routers, schemas, dependencies
 │     ├─ core/
 │     │  ├─ orchestrator/             # minute_cycle.py, nightly_cycle.py
 │     │  ├─ contracts/                # Protocols/ports
@@ -116,6 +113,7 @@ Future path:
 │     │  ├─ ingestion/
 │     │  ├─ inference/
 │     │  ├─ training/
+│     │  ├─ dashboard.py
 │     │  └─ paper_trading/
 │     ├─ models/
 │     │  ├─ statistical/
@@ -153,9 +151,9 @@ Future path:
 Boundary rules are mandatory to keep modules clean:
 
 1. `domains/*` cannot import `infra/*`.
-2. `apps/api` and `apps/worker` call orchestrators/services, not low-level adapters.
+2. API routers and future worker entrypoints call orchestrators/services, not low-level adapters.
 3. External systems (Binance, OpenRouter, PostgreSQL) are behind contract interfaces.
-4. Dependency injection and object wiring happen at composition roots (`apps/api`, `apps/worker`, and `src/capm/main.py`).
+4. Dependency injection and object wiring happen at composition roots (`src/capm/api`, future workers, and `src/capm/main.py`).
 5. Retries and network fault handling live in adapters/policies, not in domain entities.
 
 These rules protect business logic from vendor lock-in and simplify testing.
@@ -291,9 +289,10 @@ Core expectation:
 - Implement nightly refresh/backfill/retraining flow.
 - Persist model versions and rollout metadata.
 
-### Phase 6: API and Backtesting
+### Phase 6: API, Dashboard, and Backtesting
 
-- Implement Django REST endpoints for system state, controls, and logs.
+- Implement FastAPI endpoints for system state, controls, model training, data management, predictions, and live agent operations.
+- Implement the React dashboard on top of the API rather than shelling out to CLI commands.
 - Implement backtesting engine and reporting outputs.
 
 ### Phase 7: Hardening
@@ -307,8 +306,8 @@ Core expectation:
   - **Mitigation:** Make DRL optional/weekly; prioritize CPU-efficient models.
 - **Risk:** LLM malformed output causes unstable decisions.
   - **Mitigation:** strict schema parsing, retry policy, fail-safe skip.
-- **Risk:** Coupling between Django and domain logic.
-  - **Mitigation:** keep Django thin, enforce domain package ownership.
+- **Risk:** Coupling between API routers and domain logic.
+  - **Mitigation:** keep FastAPI routers thin, enforce domain package ownership.
 - **Risk:** Database growth and query slowdowns.
   - **Mitigation:** partitioning, indexes, retention strategy, query profiling.
 

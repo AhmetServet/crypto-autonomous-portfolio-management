@@ -11,3 +11,12 @@
 | 14/05/2026 – 21/05/2026 | **Paper Trading (Spot Demo Mode) Uygulaması** | Ahmet Servet Polat, Kenan Koçoğlu, Mehmet Enes Odabaş | **Başarı ölçütü:** En az 100 Spot Demo işleminin hatasız gerçekleşmesi. **Katkı: %5** |
 | 21/05/2026 – 02/06/2026 | **Kullanıcı Arayüzü (React) + API Entegrasyonu** | Ahmet Servet Polat, Kenan Koçoğlu, Mehmet Enes Odabaş | **Başarı ölçütü:** Kullanıcı parametrelerinin %100 sorunsuz girilmesi, işlem sonuçlarının UI üzerinden izlenebilir olması. **Katkı: %10** |
 | 02/06/2026 – 14/06/2026 | **Otonom AI Agent (LLM Tabanlı)** | Ahmet Servet Polat, Kenan Koçoğlu, Mehmet Enes Odabaş, Danışman: Doç. Dr. İlker Köse | **Başarı ölçütü:** AI agent'ın en az 1 hafta boyunca kesintisiz çalışıp, risk kısıtlarını (max drawdown, işlem boyutu) ihlal etmeden otonom olarak emir gönderip yönetebilmesi. **Katkı: %15** |
+
+## Güncel Uygulama Durumu
+
+- Veri pipeline: Binance REST ve public dump tabanlı OHLCV ingestion, coverage takibi, gap repair ve indikatör backfill akışları CLI ve dashboard API üzerinden çalışır durumdadır.
+- Tahmin modelleri: ARIMA, Prophet, XGBoost, LightGBM, LSTM ve GRU için eğitim/prediction akışları mevcuttur. Üretim artefact'ları model registry üzerinden aktif/pasif yapılabilir.
+- Backtesting: Walk-forward ve production training akışlarında Backtrader tabanlı holdout değerlendirme desteklenmektedir.
+- Paper trading: Binance Spot Demo Mode için hesap okuma, manuel market buy/sell, LLM agent kararı, risk kontrolü ve order journaling uygulanmıştır.
+- Dashboard: React + FastAPI dashboard; data management, training jobs, prediction runtime, model registry, live agent loop, risk controls, execution orders, Chart.js grafikler ve görsel durum panelleri içermektedir.
+- Otonom agent: `run-live-once` ve `run-loop` akışları kapalı mum üzerinden veri tamamlama, indikatör hesaplama, prediction journaling, LLM kararı, risk kontrolü ve dry-run/Spot Demo execution yolunu kullanmaktadır.
