@@ -145,6 +145,9 @@ export function LiveLoopPanel({
             <span>Symbol</span><strong>{symbol}</strong>
             <span>Interval</span><strong>{interval}</strong>
             <span>Mode</span><strong>{liveMode}</strong>
+            <span>Market</span><strong>{marketDataMode}</strong>
+            <span>Gap Recovery</span><strong>{allowLargeGapRecovery ? 'allowed' : 'blocked'}</strong>
+            <span>Stale Models</span><strong>{allowStaleModels ? 'allowed' : 'blocked'}</strong>
             <span>Models</span><strong>{activeModelArtifacts.length}</strong>
           </div>
         </div>

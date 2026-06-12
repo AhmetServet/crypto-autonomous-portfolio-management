@@ -16,10 +16,6 @@ export function LiveCyclePanel({
   marketDataMode,
   allowLargeGapRecovery,
   allowStaleModels,
-  setLiveMode,
-  setMarketDataMode,
-  setAllowLargeGapRecovery,
-  setAllowStaleModels,
   selectableModelArtifacts,
   effectiveSelectedModelArtifacts,
   artifactSelectionKey,
@@ -34,10 +30,6 @@ export function LiveCyclePanel({
   marketDataMode: 'demo' | 'live'
   allowLargeGapRecovery: boolean
   allowStaleModels: boolean
-  setLiveMode: (value: 'dry-run' | 'spot-demo') => void
-  setMarketDataMode: (value: 'demo' | 'live') => void
-  setAllowLargeGapRecovery: (value: boolean) => void
-  setAllowStaleModels: (value: boolean) => void
   selectableModelArtifacts: ModelArtifact[]
   effectiveSelectedModelArtifacts: string[]
   artifactSelectionKey: string
@@ -80,29 +72,11 @@ export function LiveCyclePanel({
           liveCycleMutation.mutate()
         }}
       >
-        <div className="control-grid">
-          <label>
-            Trading Mode
-            <select value={liveMode} onChange={(event) => setLiveMode(event.target.value as 'dry-run' | 'spot-demo')}>
-              <option value="dry-run">dry-run</option>
-              <option value="spot-demo">spot-demo</option>
-            </select>
-          </label>
-          <label>
-            Market Data
-            <select value={marketDataMode} onChange={(event) => setMarketDataMode(event.target.value as 'demo' | 'live')}>
-              <option value="demo">demo</option>
-              <option value="live">live</option>
-            </select>
-          </label>
-          <label className="check-row">
-            <input type="checkbox" checked={allowLargeGapRecovery} onChange={(event) => setAllowLargeGapRecovery(event.target.checked)} />
-            Allow large gap recovery
-          </label>
-          <label className="check-row">
-            <input type="checkbox" checked={allowStaleModels} onChange={(event) => setAllowStaleModels(event.target.checked)} />
-            Allow stale models
-          </label>
+        <div className="runtime-summary">
+          <span>{`Mode: ${liveMode}`}</span>
+          <span>{`Market: ${marketDataMode}`}</span>
+          <span>{allowLargeGapRecovery ? 'Large gap recovery on' : 'Large gap recovery off'}</span>
+          <span>{allowStaleModels ? 'Stale models allowed' : 'Fresh models required'}</span>
         </div>
         <div className="artifact-selector">
           <div className="artifact-selector-head">

@@ -1,9 +1,7 @@
 .app-shell {
   min-height: 100vh;
-  max-height: 100vh;
-  overflow: hidden;
   padding: 14px;
-  background: #06111b;
+  background: #0b1824;
   color: #fff;
   font-family: Arial, Helvetica, sans-serif;
 }
@@ -14,8 +12,8 @@
   justify-content: space-between;
   gap: 24px;
   margin-bottom: 10px;
-  border: 1px solid #203140;
-  background: #0a1724;
+  border: 1px solid #314454;
+  background: #122436;
   padding: 12px 14px;
 }
 
@@ -52,7 +50,7 @@
 .toolbar label {
   display: grid;
   gap: 4px;
-  color: #9fb0bf;
+  color: #b6c5d1;
   font-size: 11px;
   font-weight: 700;
 }
@@ -61,10 +59,10 @@ select,
 input,
 button,
 textarea {
-  min-height: 34px;
-  border: 1px solid #2b3c4b;
+  min-height: 38px;
+  border: 1px solid #3a5061;
   border-radius: 0;
-  background: #07131f;
+  background: #102131;
   color: #fff;
   font: inherit;
   letter-spacing: 0;
@@ -87,39 +85,50 @@ textarea {
 
 button {
   cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, opacity 160ms ease;
 }
 
 button:hover {
   border-color: #f4c744;
   background: #f4c744;
-  color: #06111b;
+  color: #0b1824;
 }
 
 button:disabled {
   cursor: not-allowed;
-  border-color: #344655;
-  background: #101d29;
-  color: #667887;
+  border-color: #415666;
+  background: #172838;
+  color: #8294a3;
 }
 
 button:disabled:hover {
-  background: #101d29;
-  color: #667887;
+  background: #172838;
+  color: #8294a3;
+}
+
+select:focus-visible,
+input:focus-visible,
+button:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #f4c744;
+  outline-offset: 2px;
 }
 
 .tabbar {
   display: flex;
   gap: 4px;
   margin-bottom: 10px;
-  border: 1px solid #203140;
-  background: #0a1724;
+  border: 1px solid #314454;
+  background: #122436;
   padding: 4px;
+  overflow-x: auto;
 }
 
 .tab {
-  min-height: 34px;
+  min-height: 38px;
+  flex: 0 0 auto;
   border: 0;
-  border-right: 1px solid #203140;
+  border-right: 1px solid #314454;
   background: transparent;
   color: #b9c7d3;
   padding: 0 18px;
@@ -130,14 +139,12 @@ button:disabled:hover {
 .tab.active,
 .tab.active:hover {
   background: #f4c744;
-  color: #06111b;
+  color: #0b1824;
 }
 
 .workspace {
-  height: calc(100vh - 132px);
-  overflow: hidden;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
   gap: 10px;
 }
 
@@ -156,8 +163,8 @@ button:disabled:hover {
 }
 
 .icon-button {
-  width: 32px;
-  height: 32px;
+  width: 38px;
+  height: 38px;
   padding: 0;
 }
 
@@ -182,8 +189,8 @@ button:disabled:hover {
 
 .metric,
 .panel {
-  border: 1px solid #203140;
-  background: #0a1724;
+  border: 1px solid #314454;
+  background: #122436;
 }
 
 .metric {
@@ -200,7 +207,7 @@ button:disabled:hover {
 
 .metric-head {
   gap: 7px;
-  color: #9fb0bf;
+  color: #b6c5d1;
   font-size: 12px;
   font-weight: 700;
 }
@@ -216,7 +223,7 @@ button:disabled:hover {
 .metric small {
   display: block;
   margin-top: 7px;
-  color: #9fb0bf;
+  color: #b6c5d1;
   font-size: 11px;
 }
 
@@ -229,10 +236,8 @@ button:disabled:hover {
 
 .tab-grid {
   min-height: 0;
-  overflow: auto;
   display: grid;
   gap: 10px;
-  padding-right: 2px;
 }
 
 .overview-grid {
@@ -246,6 +251,13 @@ button:disabled:hover {
   align-content: start;
 }
 
+.agent-grid > .panel:first-child,
+.agent-grid > .panel:nth-child(2),
+.agent-grid > .panel:nth-child(3),
+.agent-grid > .panel:nth-child(4) {
+  align-self: start;
+}
+
 .journal-grid {
   grid-template-columns: 1fr;
   align-content: start;
@@ -253,7 +265,6 @@ button:disabled:hover {
 
 .side-stack {
   min-height: 0;
-  overflow: auto;
   display: grid;
   align-content: start;
   gap: 10px;
@@ -272,8 +283,8 @@ button:disabled:hover {
 .panel-header {
   justify-content: space-between;
   gap: 12px;
-  border-bottom: 1px solid #203140;
-  background: #0c1b2a;
+  border-bottom: 1px solid #314454;
+  background: #182b3d;
   padding: 8px 10px;
 }
 
@@ -297,14 +308,14 @@ button:disabled:hover {
 
 .kv-grid > div {
   min-height: 54px;
-  border-right: 1px solid #203140;
-  border-bottom: 1px solid #203140;
+  border-right: 1px solid #314454;
+  border-bottom: 1px solid #314454;
   padding: 9px 10px;
 }
 
 .kv-grid span {
   display: block;
-  color: #8ea2b3;
+  color: #a9bbc9;
   font-size: 11px;
   font-weight: 700;
 }
@@ -331,7 +342,7 @@ table {
 
 th,
 td {
-  border-bottom: 1px solid #203140;
+  border-bottom: 1px solid #314454;
   padding: 7px 9px;
   text-align: left;
   vertical-align: middle;
@@ -339,7 +350,7 @@ td {
 }
 
 th {
-  background: #101f2d;
+  background: #1a2d3f;
   color: #f4c744;
   font-weight: 700;
 }
@@ -372,7 +383,7 @@ tbody tr:hover {
   border: 1px solid #3a5062;
   padding: 0 7px;
   color: #d8e2ea;
-  background: #0a1724;
+  background: #122436;
   font-size: 11px;
   font-weight: 700;
 }
@@ -405,7 +416,7 @@ tbody tr:hover {
 
 .empty {
   padding: 20px 12px;
-  color: #8ea2b3;
+  color: #a9bbc9;
   font-size: 13px;
 }
 
@@ -414,6 +425,22 @@ tbody tr:hover {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   padding: 12px;
+}
+
+.shared-runtime-grid {
+  align-items: stretch;
+}
+
+.shared-runtime-grid > label:not(.toggle-card) {
+  display: grid;
+  gap: 5px;
+  color: #b6c5d1;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.shared-runtime-grid select {
+  width: 100%;
 }
 
 .artifact-selector {
@@ -426,14 +453,14 @@ tbody tr:hover {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  border-bottom: 1px solid #203140;
+  border-bottom: 1px solid #314454;
   padding: 12px;
 }
 
 .registry-toolbar label {
   display: grid;
   gap: 5px;
-  color: #9fb0bf;
+  color: #b6c5d1;
   font-size: 11px;
   font-weight: 700;
 }
@@ -443,7 +470,7 @@ tbody tr:hover {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  color: #9fb0bf;
+  color: #b6c5d1;
   font-size: 11px;
   font-weight: 700;
 }
@@ -459,8 +486,8 @@ tbody tr:hover {
 
 .artifact-list {
   display: grid;
-  border: 1px solid #203140;
-  background: #07131f;
+  border: 1px solid #314454;
+  background: #102131;
 }
 
 .artifact-option {
@@ -468,7 +495,7 @@ tbody tr:hover {
   grid-template-columns: 18px minmax(0, 1fr);
   gap: 9px;
   align-items: start;
-  border-bottom: 1px solid #203140;
+  border-bottom: 1px solid #314454;
   padding: 10px;
   color: #fff;
 }
@@ -497,7 +524,7 @@ tbody tr:hover {
 
 .artifact-option small {
   margin-top: 4px;
-  color: #8ea2b3;
+  color: #a9bbc9;
   font-size: 11px;
   overflow-wrap: anywhere;
 }
@@ -510,7 +537,7 @@ tbody tr:hover {
 }
 
 .inline-note {
-  border-top: 1px solid #203140;
+  border-top: 1px solid #314454;
   padding: 10px 12px;
   color: #d8e2ea;
   font-size: 12px;
@@ -520,19 +547,19 @@ tbody tr:hover {
 .coverage-block {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  border-top: 1px solid #203140;
+  border-top: 1px solid #314454;
 }
 
 .coverage-block > div {
   min-height: 50px;
-  border-right: 1px solid #203140;
-  border-bottom: 1px solid #203140;
+  border-right: 1px solid #314454;
+  border-bottom: 1px solid #314454;
   padding: 10px 12px;
 }
 
 .coverage-block span {
   display: block;
-  color: #8ea2b3;
+  color: #a9bbc9;
   font-size: 11px;
   font-weight: 700;
 }
@@ -553,21 +580,21 @@ tbody tr:hover {
 .indicator-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-top: 1px solid #203140;
+  border-top: 1px solid #314454;
   max-height: 214px;
   overflow: auto;
 }
 
 .indicator-grid > div {
   min-height: 48px;
-  border-right: 1px solid #203140;
-  border-bottom: 1px solid #203140;
+  border-right: 1px solid #314454;
+  border-bottom: 1px solid #314454;
   padding: 8px 10px;
 }
 
 .indicator-grid span {
   display: block;
-  color: #8ea2b3;
+  color: #a9bbc9;
   font-size: 11px;
   font-weight: 700;
 }
@@ -586,7 +613,7 @@ tbody tr:hover {
   grid-template-columns: auto auto;
   align-items: center;
   gap: 8px;
-  color: #9fb0bf;
+  color: #b6c5d1;
   font-size: 11px;
   font-weight: 700;
 }
@@ -607,8 +634,8 @@ tbody tr:hover {
 }
 
 .chart-frame {
-  border: 1px solid #203140;
-  background: #07131f;
+  border: 1px solid #314454;
+  background: #102131;
   min-width: 0;
   padding: 10px;
 }
@@ -628,10 +655,20 @@ tbody tr:hover {
   gap: 3px;
   max-width: 280px;
   border: 1px solid #f4c744;
-  background: #07131f;
+  background: #102131;
   padding: 8px;
   color: #fff;
   font-size: 11px;
+}
+
+.chart-tooltip.compact {
+  min-width: 180px;
+  max-width: 240px;
+  gap: 5px;
+}
+
+.chart-tooltip.compact strong {
+  color: #f4c744;
 }
 
 .chart-tooltip strong,
@@ -639,12 +676,17 @@ tbody tr:hover {
   overflow-wrap: anywhere;
 }
 
-.recharts-legend-item-text {
-  color: #d8e2ea !important;
+.chart-canvas {
+  position: relative;
+  width: 100%;
 }
 
-.recharts-default-legend {
-  font-size: 11px;
+.chart-canvas-main {
+  height: 320px;
+}
+
+.chart-canvas-small {
+  height: 180px;
 }
 
 .control-grid.three {
@@ -669,7 +711,7 @@ tbody tr:hover {
 }
 
 .kv-mini span {
-  color: #8ea2b3;
+  color: #a9bbc9;
   font-weight: 700;
 }
 
@@ -687,7 +729,7 @@ tbody tr:hover {
 }
 
 .control-form {
-  border: 1px solid #203140;
+  border: 1px solid #314454;
   padding: 10px;
 }
 
@@ -703,7 +745,7 @@ tbody tr:hover {
 .run-form label {
   display: grid;
   gap: 5px;
-  color: #9fb0bf;
+  color: #b6c5d1;
   font-size: 11px;
   font-weight: 700;
 }
@@ -726,6 +768,64 @@ tbody tr:hover {
   width: 16px;
   min-height: 16px;
   accent-color: #f4c744;
+}
+
+.toggle-card {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  border: 1px solid #314454;
+  background: #102131;
+  padding: 10px;
+  color: #fff;
+}
+
+.toggle-card:hover {
+  border-color: #3d5569;
+  background: #0d1d2b;
+}
+
+.toggle-card input {
+  width: 18px;
+  min-height: 18px;
+  margin: 1px 0 0;
+  accent-color: #f4c744;
+}
+
+.toggle-card strong,
+.toggle-card small {
+  display: block;
+}
+
+.toggle-card strong {
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.toggle-card small {
+  margin-top: 4px;
+  color: #a9bbc9;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.runtime-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-bottom: 1px solid #314454;
+  padding: 10px 12px;
+  color: #d8e2ea;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.runtime-summary span {
+  border: 1px solid #3a5061;
+  background: #102131;
+  padding: 5px 8px;
 }
 
 .control-form button,
@@ -764,7 +864,7 @@ tbody tr:hover {
   height: 100vh;
   overflow-y: auto;
   border-left: 1px solid #f4c744;
-  background: #0a1724;
+  background: #122436;
   color: #fff;
 }
 
@@ -775,8 +875,8 @@ tbody tr:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #203140;
-  background: #0a1724;
+  border-bottom: 1px solid #314454;
+  background: #122436;
   padding: 14px;
 }
 
@@ -800,9 +900,9 @@ tbody tr:hover {
 .prompt-blocks h3,
 .result-block h3 {
   margin: 0;
-  border-bottom: 1px solid #203140;
+  border-bottom: 1px solid #314454;
   padding: 8px 10px;
-  background: #101f2d;
+  background: #1a2d3f;
   font-size: 12px;
 }
 
@@ -810,10 +910,10 @@ pre {
   margin: 0;
   max-height: 380px;
   overflow: auto;
-  border: 1px solid #203140;
+  border: 1px solid #314454;
   border-top: 0;
   padding: 10px;
-  background: #07131f;
+  background: #102131;
   color: #d8e2ea;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
   font-size: 12px;
@@ -834,6 +934,7 @@ pre {
   .metrics-grid,
   .main-grid,
   .overview-grid,
+  .charts-grid,
   .trade-grid,
   .agent-grid,
   .models-grid {
@@ -855,18 +956,16 @@ pre {
 @media (max-width: 680px) {
   .app-shell {
     padding: 12px;
-    max-height: none;
-    overflow: auto;
   }
 
   .workspace {
-    height: auto;
-    overflow: visible;
+    grid-template-rows: auto auto;
   }
 
   .metrics-grid,
   .main-grid,
   .overview-grid,
+  .charts-grid,
   .trade-grid,
   .agent-grid,
   .models-grid,
@@ -878,6 +977,10 @@ pre {
   .control-grid.three,
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .charts-grid .chart-frame:first-child {
+    grid-row: auto;
   }
 
   .control-form.wide {

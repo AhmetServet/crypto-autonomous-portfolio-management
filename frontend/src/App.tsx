@@ -6,6 +6,7 @@ import {
   BarChart3,
   Clock,
   Database,
+  Settings2,
   RefreshCw,
   Shield,
   ShoppingCart,
@@ -110,6 +111,61 @@ function ManualSpotDemoPanel({
       </div>
       <MutationResult title="Buy Result" data={buyMutation.data} error={buyMutation.error} />
       <MutationResult title="Sell Result" data={sellMutation.data} error={sellMutation.error} />
+    </Panel>
+  )
+}
+
+function RuntimeConfigurationPanel({
+  liveMode,
+  marketDataMode,
+  allowLargeGapRecovery,
+  allowStaleModels,
+  setLiveMode,
+  setMarketDataMode,
+  setAllowLargeGapRecovery,
+  setAllowStaleModels,
+}: {
+  liveMode: 'dry-run' | 'spot-demo'
+  marketDataMode: 'demo' | 'live'
+  allowLargeGapRecovery: boolean
+  allowStaleModels: boolean
+  setLiveMode: (value: 'dry-run' | 'spot-demo') => void
+  setMarketDataMode: (value: 'demo' | 'live') => void
+  setAllowLargeGapRecovery: (value: boolean) => void
+  setAllowStaleModels: (value: boolean) => void
+}) {
+  return (
+    <Panel title="Runtime Configuration" icon={<Settings2 size={17} />}>
+      <div className="control-grid shared-runtime-grid">
+        <label>
+          Trading Mode
+          <select value={liveMode} onChange={(event) => setLiveMode(event.target.value as 'dry-run' | 'spot-demo')}>
+            <option value="dry-run">dry-run</option>
+            <option value="spot-demo">spot-demo</option>
+          </select>
+        </label>
+        <label>
+          Market Data
+          <select value={marketDataMode} onChange={(event) => setMarketDataMode(event.target.value as 'demo' | 'live')}>
+            <option value="demo">demo</option>
+            <option value="live">live</option>
+          </select>
+        </label>
+        <label className="toggle-card">
+          <input type="checkbox" checked={allowLargeGapRecovery} onChange={(event) => setAllowLargeGapRecovery(event.target.checked)} />
+          <span>
+            <strong>Large gap recovery</strong>
+            <small>Used by run-once and live loop when recent candles need repair.</small>
+          </span>
+        </label>
+        <label className="toggle-card">
+          <input type="checkbox" checked={allowStaleModels} onChange={(event) => setAllowStaleModels(event.target.checked)} />
+          <span>
+            <strong>Allow stale models</strong>
+            <small>Used by run-once and live loop when model age exceeds the guardrail.</small>
+          </span>
+        </label>
+      </div>
     </Panel>
   )
 }
@@ -342,10 +398,7 @@ function App() {
 
         {activeTab === 'agent' ? (
           <div className="tab-grid agent-grid">
-            <RiskControlsPanel preset={riskPreset} settings={riskSettings} onPresetChange={applyRiskPreset} onSettingsChange={setRiskSettings} />
-            <LiveCyclePanel
-              symbol={symbol}
-              interval={interval}
+            <RuntimeConfigurationPanel
               liveMode={liveMode}
               marketDataMode={marketDataMode}
               allowLargeGapRecovery={allowLargeGapRecovery}
@@ -354,6 +407,15 @@ function App() {
               setMarketDataMode={setMarketDataMode}
               setAllowLargeGapRecovery={setAllowLargeGapRecovery}
               setAllowStaleModels={setAllowStaleModels}
+            />
+            <RiskControlsPanel preset={riskPreset} settings={riskSettings} onPresetChange={applyRiskPreset} onSettingsChange={setRiskSettings} />
+            <LiveCyclePanel
+              symbol={symbol}
+              interval={interval}
+              liveMode={liveMode}
+              marketDataMode={marketDataMode}
+              allowLargeGapRecovery={allowLargeGapRecovery}
+              allowStaleModels={allowStaleModels}
               selectableModelArtifacts={selectableModelArtifacts as ModelArtifact[]}
               effectiveSelectedModelArtifacts={effectiveSelectedModelArtifacts}
               artifactSelectionKey={artifactSelectionKey}
