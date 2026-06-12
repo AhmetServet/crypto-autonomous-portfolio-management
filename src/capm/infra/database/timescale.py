@@ -1086,6 +1086,13 @@ class TimescaleMarketDataRepository:
             )
             return tuple(row.to_domain() for row in session.scalars(stmt).all())
 
+    def get_agent_decision_journal_entry(self, journal_id: int) -> AgentDecisionJournalEntry | None:
+        """Return one agent decision row by id."""
+        self._ensure_static_table(self._agent_decision_journal_model)
+        with self._session_factory() as session:
+            row = session.get(self._agent_decision_journal_model, journal_id)
+            return row.to_domain() if row is not None else None
+
     def summarize_agent_decision_journal(
         self,
         symbol: str,

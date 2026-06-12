@@ -435,6 +435,15 @@ uv run python -m unittest discover -s tests -t . -v
 - cross-symbol feature queries are not optimized in this design
 - normalization and label creation are intentionally deferred to downstream ML modules
 
+## 16.1 Current Dashboard/API Integration
+The dashboard exposes indicator operations through FastAPI:
+
+```text
+POST /api/features/backfill-indicators
+```
+
+The Data tab can backfill indicators for a selected symbol and interval, choose chunk size, and optionally resume from the latest derived row. Live-cycle execution also recomputes a model-aware recent indicator window with warm-up rows so deep-learning sequence models do not lose ready feature rows at the prediction boundary.
+
 ## 17. Next Implementation Steps
 1. add integration tests against PostgreSQL + TimescaleDB for raw and feature tables
 2. version feature payloads explicitly once multiple model profiles are introduced

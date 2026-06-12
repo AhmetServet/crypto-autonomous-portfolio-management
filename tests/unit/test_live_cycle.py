@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+import json
 import os
 import tempfile
 import unittest
@@ -127,6 +128,68 @@ class LiveCycleTests(unittest.TestCase):
         self.assertEqual(result.decisions, ("decision",))
         self.assertIn(("ingest", _candle(4).open_time, datetime(2026, 6, 2, 12, 5, tzinfo=UTC)), calls)
         self.assertIn(("llm", "1m", "spot-demo"), calls)
+
+    def test_cycle_uses_deep_learning_sequence_length_for_indicator_persist_window(self) -> None:
+        repository = Repository()
+        calls = []
+        with tempfile.TemporaryDirectory() as directory:
+            artifact = Path(directory) / "model.pkl"
+            artifact.touch()
+            (Path(directory) / "summary.json").write_text(
+                json.dumps({"model_artifact_path": str(artifact), "sequence_length": 120}),
+            )
+
+            class Ingestion:
+                def __init__(self, **kwargs):
+                    pass
+
+                def ingest_ohlcv(self, request):
+                    repository.latest = _candle(4).open_time
+                    return IngestionResult(
+                        fetched_count=1,
+                        stored_count=1,
+                        started_at=request.start_at,
+                        ended_at=request.end_at,
+                    )
+
+            class IndicatorPipeline:
+                def __init__(self, **kwargs):
+                    pass
+
+                def compute_feature_batch(self, **kwargs):
+                    calls.append(("features", kwargs["start_time"], kwargs["persist_start_time"], kwargs["end_time"]))
+                    return type("Batch", (), {"indicator_sets": ()})()
+
+            class Journal:
+                def __init__(self, **kwargs):
+                    pass
+
+                def settle_predictions(self, **kwargs):
+                    return {"settled": 0}
+
+            class TradingAgent:
+                def run_llm_once(self, **kwargs):
+                    return ()
+
+            with (
+                patch("capm.services.live_cycle.HistoricalMarketDataIngestionService", Ingestion),
+                patch("capm.services.live_cycle.IndicatorPipelineService", IndicatorPipeline),
+                patch("capm.services.live_cycle.PredictionJournalService", Journal),
+            ):
+                LiveTradingCycleService(
+                    repository=repository,
+                    market_data_adapter=object(),
+                    trading_agent=TradingAgent(),
+                    llm_policy=object(),
+                    artifacts_by_symbol={"BTCUSDT": (artifact,)},
+                    now=lambda: datetime(2026, 6, 2, 12, 5, 30, tzinfo=UTC),
+                    allow_stale_models=True,
+                    prediction_runner=lambda path, symbol, interval, reference_time: None,
+                ).run_once()
+
+        feature_call = next(item for item in calls if item[0] == "features")
+        self.assertEqual(feature_call[2], datetime(2026, 6, 2, 10, 5, tzinfo=UTC))
+        self.assertEqual(feature_call[1], datetime(2026, 6, 2, 9, 32, tzinfo=UTC))
 
     def test_cycle_rejects_symbols_without_configured_artifacts(self) -> None:
         with self.assertRaisesRegex(ValueError, "No production model artifacts configured"):

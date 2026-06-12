@@ -14,6 +14,10 @@ The first implementation slice now includes a Python package under `src/capm` fo
 - Binance market-data LLD: `docs/lld/binance_spot_market_data/lld.md`
 - Data-store LLD: `docs/lld/data_store/lld.md`
 - Prediction-model LLD: `docs/lld/prediction_models/lld.md`
+- Deep-learning LLD: `docs/lld/deep_learning/lld.md`
+- Prediction-journal LLD: `docs/lld/prediction_models/prediction_journal.md`
+- Spot Demo trading-agent LLD: `docs/lld/trading_agent/spot_demo_trading_agent.md`
+- Dashboard LLD: `docs/lld/dashboard/lld.md`
 
 ### Setup
 ```bash
@@ -109,7 +113,7 @@ These components are designed to read stored candles and feature rows through th
 Example configs live under `experiments/configs/`. After you have ingested OHLCV into the database (and, for `xgboost` / `lightgbm`, persisted the matching feature columns), run:
 
 ```bash
-uv run capm-experiment-walkforward --config experiments/configs/walk_forward_arima.example.json
+uv run capm-experiment-walkforward --config experiments/configs/recent_arima_btcusdt_1m_15m.json
 ```
 
 Use `--env-file .env` if your database URL is not already in the environment. Set `"init_schema": true` in the JSON once if you need to create coinpair tables for the symbol before loading data. The CLI now prints progress logs to stderr while preserving the final JSON summary on stdout; pass `--quiet` to suppress those logs.
@@ -117,16 +121,10 @@ Use `--env-file .env` if your database URL is not already in the environment. Se
 Metrics and run artifacts are written under `experiments/results/<run_id>/` (gitignored except `.gitkeep`) as a small consolidated set of files: `request.json`, `split_predictions.json`, `split_reports.json`, `trained_models.pkl`, and `summary.json`. `trained_models.pkl` stores the latest fitted model from each walk-forward split. Enable `"backtest": { "enabled": true, ... }` only after installing the `backtest` extra; it merges all walk-forward split predictions and runs one offline simulation over the same candle window.
 
 ### Production-style training and prediction
-Production-style tabular training writes a deployable `model.pkl` artifact plus a `summary.json`:
+Production-style tabular training writes deployable `model.pkl` artifacts plus `summary.json` files. The full tabular preset compares XGBoost and LightGBM from one config:
 
 ```bash
-uv run capm-train-production --config experiments/configs/train_xgboost_production.example.json
-```
-
-Compare XGBoost and LightGBM from one config:
-
-```bash
-uv run capm-train-production --config experiments/configs/compare_tabular_production.example.json
+uv run capm-train-production --config experiments/configs/full_tabular_compare_btcusdt_1m_15m.json
 ```
 
 Run one prediction from a saved production model or a walk-forward `trained_models.pkl` artifact:
@@ -149,17 +147,11 @@ uv sync --extra deep-learning
 Train one LSTM or GRU production artifact:
 
 ```bash
-uv run capm-train-deep-learning --config experiments/configs/train_lstm_production.example.json
-uv run capm-train-deep-learning --config experiments/configs/train_gru_production.example.json
+uv run capm-train-deep-learning --config experiments/configs/full_lstm_btcusdt_1m_15m.json
+uv run capm-train-deep-learning --config experiments/configs/full_gru_btcusdt_1m_15m.json
 ```
 
 The deep-learning CLI prints progress logs to stderr for long runs while preserving the final JSON summary on stdout. Use `--quiet` when only the JSON output is needed.
-
-Compare both recurrent models from one config:
-
-```bash
-uv run capm-train-deep-learning --config experiments/configs/compare_deep_learning.example.json
-```
 
 The deep-learning trainer reads ready feature rows from the database, builds causal sequence windows, fits the feature scaler on the train split only, writes `model.pkl` and `summary.json`, and runs the same holdout Backtrader evaluation path as production tabular models. Saved artifacts use `artifact_kind = "deep_learning_sequence"` and can be passed to `uv run capm predict` with the same command shown above.
 
@@ -308,6 +300,87 @@ uv run capm agent report \
 ```
 
 The report includes the latest candle and indicator row, current derived position state, recent prediction-journal rows, recent agent decisions, prediction and decision summaries over the last 24 hours, and the current symbol-scoped operational-risk snapshot. Add `--include-prompts` to include stored LLM prompt metadata, and `--include-spot-demo` to read current Spot Demo balances.
+
+Run the dashboard API:
+
+```bash
+uv run capm-api --host 127.0.0.1 --port 8000
+```
+
+Swagger/OpenAPI is available at `http://127.0.0.1:8000/docs`.
+
+The dashboard API exposes:
+
+- `GET /api/health`
+- `GET /api/symbols?interval=1m`
+- `GET /api/dashboard/summary?symbol=BTCUSDT&interval=1m`
+- `GET /api/charts/dashboard?symbol=BTCUSDT&interval=1m&lookback_hours=24`
+- `GET /api/agent/decisions?symbol=BTCUSDT&interval=1m&limit=50`
+- `GET /api/execution/orders?symbol=BTCUSDT&interval=1m&limit=50`
+- `GET /api/predictions?symbol=BTCUSDT&interval=1m&limit=100`
+- `GET /api/positions?symbol=BTCUSDT&interval=1m`
+- `GET /api/risk/status?symbol=BTCUSDT`
+- `GET /api/llm/prompts/<journal_id>`
+- `GET /api/spot-demo/portfolio?symbol=BTCUSDT`
+- `GET /api/model-artifacts?symbol=BTCUSDT&interval=1m`
+- `GET /api/training/presets`
+- `GET /api/training/jobs`
+- `GET /api/training/jobs/<job_id>`
+- `GET /api/data/coverage?symbol=BTCUSDT&interval=1m`
+- `GET /api/agent/loops`
+- `GET /api/agent/loops/<loop_id>`
+- `POST /api/agent/run-once`
+- `POST /api/agent/run-live-once`
+- `POST /api/agent/loops`
+- `POST /api/agent/loops/<loop_id>/stop`
+- `POST /api/predict`
+- `POST /api/predict/batch`
+- `POST /api/predictions/settle`
+- `POST /api/prediction-journal/summary`
+- `POST /api/database/init`
+- `POST /api/market/fetch-ohlcv`
+- `POST /api/market/ingest-ohlcv`
+- `POST /api/market/repair-ohlcv-gaps`
+- `POST /api/features/backfill-indicators`
+- `POST /api/training/jobs`
+- `POST /api/training/jobs/<job_id>/cancel`
+- `POST /api/model-artifacts/state`
+- `POST /api/spot-demo/market-buy`
+- `POST /api/spot-demo/market-sell`
+
+Manual Spot Demo order endpoints require `confirm: true` in the JSON body. Example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/spot-demo/market-buy \
+  -H 'Content-Type: application/json' \
+  -d '{"symbol":"BTCUSDT","usdt_amount":10,"confirm":true}'
+```
+
+Run the dashboard frontend:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend expects the API at `http://127.0.0.1:8000` by default. Override it with `VITE_CAPM_API_BASE_URL` when needed.
+
+Current dashboard capabilities:
+- Overview: health, freshness, position/risk, Chart.js price chart with candlestick-style OHLC overlay, buy/sell/hold markers, indicator chart, realized PnL curve, live status beacon, risk meters, active model cards, and decision timeline.
+- Trade: Spot Demo portfolio, confirmed manual market buy/sell, recent execution orders, raw order drawer, and realized PnL columns.
+- Agent: shared runtime configuration, risk presets/limits, run-once, continuous live loop start/stop, loop logs, and manual agent action controls.
+- Data: database init, OHLCV fetch/ingest, data coverage, gap repair, and indicator backfill.
+- Models: training presets, generated config preview, training job queue/logs/cancel, active model cards, prediction runtime tools, prediction settlement, prediction summary, and model registry state controls.
+- Journal: recent decisions, recent predictions, execution orders, prompt drawer, and raw LLM responses.
+
+Frontend quality checks:
+
+```bash
+cd frontend
+npm run lint
+npm run build
+```
 
 Summarize recorded decisions:
 

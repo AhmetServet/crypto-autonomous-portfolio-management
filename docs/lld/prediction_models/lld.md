@@ -67,6 +67,10 @@ Implemented:
 - runtime prediction from saved artifacts is available through `capm predict`
 - Backtrader evaluation is wired into forecast results and production holdout runs
 - XGBoost and LightGBM can be compared from one config and ranked by holdout cumulative return
+- production artifacts are discoverable through the dashboard model registry
+- artifact state can be changed between active, inactive, archived, and unarchived through the dashboard/API
+- dashboard prediction tools can run one selected model, run all active models, journal predictions, settle predictions, and summarize prediction quality
+- dashboard training jobs can start tabular and statistical presets without hand-editing JSON
 
 Current BTCUSDT 1m production experiment shape:
 - data source: local TimescaleDB feature rows
@@ -160,11 +164,23 @@ Responsibilities by area:
 - `experiments/`
   - notebook, config, and CLI entrypoints for exploratory work that call shared services instead of duplicating logic
 
-Implemented CLIs:
-- `uv run capm-experiment-walkforward --config experiments/configs/walk_forward_arima.example.json`
-- `uv run capm-train-production --config experiments/configs/train_xgboost_production.example.json`
-- `uv run capm-train-production --config experiments/configs/compare_tabular_production.example.json`
+Implemented CLIs and API/UI entrypoints:
+- `uv run capm-experiment-walkforward --config experiments/configs/recent_arima_btcusdt_1m_15m.json`
+- `uv run capm-train-production --config experiments/configs/full_tabular_compare_btcusdt_1m_15m.json`
 - `uv run capm predict --model-artifact experiments/results/<run_id>/model.pkl --symbol BTCUSDT --interval 1m`
+- `POST /api/training/jobs`
+- `GET /api/training/presets`
+- `GET /api/model-artifacts`
+- `POST /api/predict`
+- `POST /api/predict/batch`
+- `POST /api/predictions/settle`
+- `POST /api/prediction-journal/summary`
+
+Current checked-in config presets:
+- `experiments/configs/quick_tabular_smoke_btcusdt_1m_15m.json`
+- `experiments/configs/full_tabular_compare_btcusdt_1m_15m.json`
+- `experiments/configs/recent_arima_btcusdt_1m_15m.json`
+- `experiments/configs/recent_prophet_btcusdt_1m_15m.json`
 
 This structure follows the repository's current pattern of keeping domain rules pure, storage behind contracts, and orchestration inside services.
 
@@ -420,12 +436,7 @@ The production trainer is the current path for creating a model artifact that ca
 
 Current command:
 ```bash
-uv run capm-train-production --config experiments/configs/train_xgboost_production.example.json
-```
-
-Comparison command:
-```bash
-uv run capm-train-production --config experiments/configs/compare_tabular_production.example.json
+uv run capm-train-production --config experiments/configs/full_tabular_compare_btcusdt_1m_15m.json
 ```
 
 Flow:
@@ -535,9 +546,10 @@ Rules:
   - metrics, plots, serialized predictions, and backtest summaries
 
 Current config files include:
-- `walk_forward_arima.example.json`
-- `train_xgboost_production.example.json`
-- `compare_tabular_production.example.json`
+- `quick_tabular_smoke_btcusdt_1m_15m.json`
+- `full_tabular_compare_btcusdt_1m_15m.json`
+- `recent_arima_btcusdt_1m_15m.json`
+- `recent_prophet_btcusdt_1m_15m.json`
 
 Current executable entrypoints live under `src/capm/experiments/` and are exposed through `pyproject.toml` scripts.
 
@@ -624,8 +636,8 @@ Configured optional dependency groups:
 Commands:
 ```bash
 uv sync --extra ml --extra backtest
-uv run capm-experiment-walkforward --config experiments/configs/walk_forward_arima.example.json
-uv run capm-train-production --config experiments/configs/compare_tabular_production.example.json
+uv run capm-experiment-walkforward --config experiments/configs/recent_arima_btcusdt_1m_15m.json
+uv run capm-train-production --config experiments/configs/full_tabular_compare_btcusdt_1m_15m.json
 ```
 
 Rule:
@@ -669,3 +681,5 @@ uv run python -m unittest discover -s tests -t . -v
 7. Persist prediction outputs into a decision/prediction journal table for agent and paper-trading analysis.
 8. Design the daily retraining and daytime inference scheduler after the offline model-selection loop is stable.
 9. Revisit storage shape if large-scale training makes JSON-backed feature reads too slow.
+10. Persist dashboard training-job state in the database instead of only API-process memory/local job files.
+11. Add richer dashboard model-comparison views that compare artifact versions directly.

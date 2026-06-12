@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 import json
+from threading import RLock
 from typing import Any, cast
 
 from sqlalchemy import Boolean, DateTime, Float, Integer, JSON, Numeric, String, UniqueConstraint
@@ -78,6 +79,7 @@ _COINPAIR_MODEL_CACHE: dict[str | None, type[Base]] = {}
 _COVERAGE_MODEL_CACHE: dict[tuple[str | None, str], type[Base]] = {}
 _PREDICTION_JOURNAL_MODEL_CACHE: dict[str | None, type[Base]] = {}
 _AGENT_DECISION_JOURNAL_MODEL_CACHE: dict[str | None, type[Base]] = {}
+_MODEL_FACTORY_LOCK = RLock()
 
 
 def build_ohlcv_table_name(coinpair_id: int) -> str:
@@ -93,6 +95,11 @@ def build_feature_table_name(coinpair_id: int) -> str:
 def _class_name_fragment(value: str) -> str:
     """Convert a table name into a deterministic class-name fragment."""
     return "".join(part.capitalize() for part in value.split("_"))
+
+
+def _static_class_name(schema_name: str | None, base_name: str) -> str:
+    """Return a schema-aware class name for static metadata models."""
+    return f"{_class_name_fragment(schema_name)}{base_name}" if schema_name else base_name
 
 
 def candle_to_record(entity: OHLCV) -> dict[str, object]:
@@ -265,67 +272,69 @@ class CoverageModelMixin:
 
 def get_coinpair_model(schema_name: str | None = None) -> type[Base]:
     """Return a cached ORM model for the coinpair registry table."""
-    cached_model = _COINPAIR_MODEL_CACHE.get(schema_name)
-    if cached_model is not None:
-        return cached_model
+    with _MODEL_FACTORY_LOCK:
+        cached_model = _COINPAIR_MODEL_CACHE.get(schema_name)
+        if cached_model is not None:
+            return cached_model
 
-    annotations = {
-        "id": Mapped[int],
-        "symbol": Mapped[str],
-    }
-    attributes: dict[str, Any] = {
-        "__tablename__": "coinpairs",
-        "__module__": __name__,
-        "__table_args__": {"schema": schema_name} if schema_name else {},
-        "__annotations__": annotations,
-        "id": mapped_column(Integer, primary_key=True, autoincrement=True),
-        "symbol": mapped_column(String(64), nullable=False, unique=True, index=True),
-    }
+        annotations = {
+            "id": Mapped[int],
+            "symbol": Mapped[str],
+        }
+        attributes: dict[str, Any] = {
+            "__tablename__": "coinpairs",
+            "__module__": __name__,
+            "__table_args__": {"schema": schema_name} if schema_name else {},
+            "__annotations__": annotations,
+            "id": mapped_column(Integer, primary_key=True, autoincrement=True),
+            "symbol": mapped_column(String(64), nullable=False, unique=True, index=True),
+        }
 
-    model = cast(
-        type[Base],
-        type("CoinpairModel", (Base,), attributes),
-    )
-    _COINPAIR_MODEL_CACHE[schema_name] = model
-    return model
+        model = cast(
+            type[Base],
+            type(_static_class_name(schema_name, "CoinpairModel"), (Base,), attributes),
+        )
+        _COINPAIR_MODEL_CACHE[schema_name] = model
+        return model
 
 
 def get_coverage_model(table_name: str, schema_name: str | None = None) -> type[Base]:
     """Return a cached ORM model for one coverage metadata table."""
     cache_key = (schema_name, table_name)
-    cached_model = _COVERAGE_MODEL_CACHE.get(cache_key)
-    if cached_model is not None:
-        return cached_model
+    with _MODEL_FACTORY_LOCK:
+        cached_model = _COVERAGE_MODEL_CACHE.get(cache_key)
+        if cached_model is not None:
+            return cached_model
 
-    annotations = {
-        "id": Mapped[int],
-        "coinpair_id": Mapped[int],
-        "table_name": Mapped[str],
-        "symbol": Mapped[str],
-        "interval": Mapped[str],
-        "start_open_time": Mapped[datetime],
-        "end_open_time": Mapped[datetime],
-    }
-    attributes: dict[str, Any] = {
-        "__tablename__": table_name,
-        "__module__": __name__,
-        "__table_args__": {"schema": schema_name} if schema_name else {},
-        "__annotations__": annotations,
-        "id": mapped_column(Integer, primary_key=True, autoincrement=True),
-        "coinpair_id": mapped_column(Integer, nullable=False, index=True),
-        "table_name": mapped_column(String(128), nullable=False),
-        "symbol": mapped_column(String(64), nullable=False, index=True),
-        "interval": mapped_column(String(5), nullable=False, index=True),
-        "start_open_time": mapped_column(DateTime(timezone=True), nullable=False),
-        "end_open_time": mapped_column(DateTime(timezone=True), nullable=False),
-    }
+        annotations = {
+            "id": Mapped[int],
+            "coinpair_id": Mapped[int],
+            "table_name": Mapped[str],
+            "symbol": Mapped[str],
+            "interval": Mapped[str],
+            "start_open_time": Mapped[datetime],
+            "end_open_time": Mapped[datetime],
+        }
+        attributes: dict[str, Any] = {
+            "__tablename__": table_name,
+            "__module__": __name__,
+            "__table_args__": {"schema": schema_name} if schema_name else {},
+            "__annotations__": annotations,
+            "id": mapped_column(Integer, primary_key=True, autoincrement=True),
+            "coinpair_id": mapped_column(Integer, nullable=False, index=True),
+            "table_name": mapped_column(String(128), nullable=False),
+            "symbol": mapped_column(String(64), nullable=False, index=True),
+            "interval": mapped_column(String(5), nullable=False, index=True),
+            "start_open_time": mapped_column(DateTime(timezone=True), nullable=False),
+            "end_open_time": mapped_column(DateTime(timezone=True), nullable=False),
+        }
 
-    model = cast(
-        type[Base],
-        type(f"{table_name.title().replace('_', '')}Model", (CoverageModelMixin, Base), attributes),
-    )
-    _COVERAGE_MODEL_CACHE[cache_key] = model
-    return model
+        model = cast(
+            type[Base],
+            type(f"{table_name.title().replace('_', '')}Model", (CoverageModelMixin, Base), attributes),
+        )
+        _COVERAGE_MODEL_CACHE[cache_key] = model
+        return model
 
 
 def prediction_journal_to_record(entity: PredictionJournalEntry) -> dict[str, object]:
@@ -387,164 +396,169 @@ def agent_decision_journal_to_record(entity: AgentDecisionJournalEntry) -> dict[
 
 def get_prediction_journal_model(schema_name: str | None = None) -> type[Base]:
     """Return the static ORM model for prediction journal rows."""
-    cached_model = _PREDICTION_JOURNAL_MODEL_CACHE.get(schema_name)
-    if cached_model is not None:
-        return cached_model
+    with _MODEL_FACTORY_LOCK:
+        cached_model = _PREDICTION_JOURNAL_MODEL_CACHE.get(schema_name)
+        if cached_model is not None:
+            return cached_model
 
-    table_args: tuple[Any, ...] = (
-        UniqueConstraint(
-            "symbol",
-            "interval",
-            "model_name",
-            "artifact_sha256",
-            "reference_time",
-            "prediction_time",
-            name="uq_prediction_journal_prediction",
-        ),
-    )
-    if schema_name:
-        table_args = (*table_args, {"schema": schema_name})
+        table_args: tuple[Any, ...] = (
+            UniqueConstraint(
+                "symbol",
+                "interval",
+                "model_name",
+                "artifact_sha256",
+                "reference_time",
+                "prediction_time",
+                name="uq_prediction_journal_prediction",
+            ),
+        )
+        if schema_name:
+            table_args = (*table_args, {"schema": schema_name})
 
-    annotations = {
-        "id": Mapped[int],
-        "created_at": Mapped[datetime],
-        "updated_at": Mapped[datetime],
-        "symbol": Mapped[str],
-        "interval": Mapped[str],
-        "model_name": Mapped[str],
-        "artifact_kind": Mapped[str],
-        "artifact_path": Mapped[str],
-        "artifact_sha256": Mapped[str],
-        "reference_time": Mapped[datetime],
-        "prediction_time": Mapped[datetime],
-        "forecast_horizon": Mapped[int],
-        "target_field": Mapped[str],
-        "target_mode": Mapped[str],
-        "reference_value": Mapped[float],
-        "predicted_value": Mapped[float],
-        "predicted_return": Mapped[float],
-        "predicted_direction": Mapped[str],
-        "feature_names": Mapped[list[str]],
-        "extra_metadata": Mapped[dict[str, object]],
-        "actual_value": Mapped[float | None],
-        "actual_return": Mapped[float | None],
-        "actual_direction": Mapped[str | None],
-        "absolute_error": Mapped[float | None],
-        "absolute_percentage_error": Mapped[float | None],
-        "direction_correct": Mapped[bool | None],
-        "settled_at": Mapped[datetime | None],
-    }
-    attributes: dict[str, Any] = {
-        "__tablename__": "prediction_journal",
-        "__module__": __name__,
-        "__table_args__": table_args,
-        "__annotations__": annotations,
-        "id": mapped_column(Integer, primary_key=True, autoincrement=True),
-        "created_at": mapped_column(DateTime(timezone=True), nullable=False),
-        "updated_at": mapped_column(DateTime(timezone=True), nullable=False),
-        "symbol": mapped_column(String(64), nullable=False, index=True),
-        "interval": mapped_column(String(5), nullable=False, index=True),
-        "model_name": mapped_column(String(64), nullable=False, index=True),
-        "artifact_kind": mapped_column(String(64), nullable=False),
-        "artifact_path": mapped_column(String(1024), nullable=False),
-        "artifact_sha256": mapped_column(String(64), nullable=False),
-        "reference_time": mapped_column(DateTime(timezone=True), nullable=False, index=True),
-        "prediction_time": mapped_column(DateTime(timezone=True), nullable=False, index=True),
-        "forecast_horizon": mapped_column(Integer, nullable=False),
-        "target_field": mapped_column(String(32), nullable=False),
-        "target_mode": mapped_column(String(32), nullable=False),
-        "reference_value": mapped_column(Float, nullable=False),
-        "predicted_value": mapped_column(Float, nullable=False),
-        "predicted_return": mapped_column(Float, nullable=False),
-        "predicted_direction": mapped_column(String(8), nullable=False),
-        "feature_names": mapped_column(JSON, nullable=False, default=list),
-        "extra_metadata": mapped_column(JSON, nullable=False, default=dict),
-        "actual_value": mapped_column(Float, nullable=True),
-        "actual_return": mapped_column(Float, nullable=True),
-        "actual_direction": mapped_column(String(8), nullable=True),
-        "absolute_error": mapped_column(Float, nullable=True),
-        "absolute_percentage_error": mapped_column(Float, nullable=True),
-        "direction_correct": mapped_column(Boolean, nullable=True),
-        "settled_at": mapped_column(DateTime(timezone=True), nullable=True, index=True),
-    }
-    model = cast(
-        type[Base],
-        type("PredictionJournalModel", (PredictionJournalModelMixin, Base), attributes),
-    )
-    _PREDICTION_JOURNAL_MODEL_CACHE[schema_name] = model
-    return model
+        annotations = {
+            "id": Mapped[int],
+            "created_at": Mapped[datetime],
+            "updated_at": Mapped[datetime],
+            "symbol": Mapped[str],
+            "interval": Mapped[str],
+            "model_name": Mapped[str],
+            "artifact_kind": Mapped[str],
+            "artifact_path": Mapped[str],
+            "artifact_sha256": Mapped[str],
+            "reference_time": Mapped[datetime],
+            "prediction_time": Mapped[datetime],
+            "forecast_horizon": Mapped[int],
+            "target_field": Mapped[str],
+            "target_mode": Mapped[str],
+            "reference_value": Mapped[float],
+            "predicted_value": Mapped[float],
+            "predicted_return": Mapped[float],
+            "predicted_direction": Mapped[str],
+            "feature_names": Mapped[list[str]],
+            "extra_metadata": Mapped[dict[str, object]],
+            "actual_value": Mapped[float | None],
+            "actual_return": Mapped[float | None],
+            "actual_direction": Mapped[str | None],
+            "absolute_error": Mapped[float | None],
+            "absolute_percentage_error": Mapped[float | None],
+            "direction_correct": Mapped[bool | None],
+            "settled_at": Mapped[datetime | None],
+        }
+        attributes: dict[str, Any] = {
+            "__tablename__": "prediction_journal",
+            "__module__": __name__,
+            "__table_args__": table_args,
+            "__annotations__": annotations,
+            "id": mapped_column(Integer, primary_key=True, autoincrement=True),
+            "created_at": mapped_column(DateTime(timezone=True), nullable=False),
+            "updated_at": mapped_column(DateTime(timezone=True), nullable=False),
+            "symbol": mapped_column(String(64), nullable=False, index=True),
+            "interval": mapped_column(String(5), nullable=False, index=True),
+            "model_name": mapped_column(String(64), nullable=False, index=True),
+            "artifact_kind": mapped_column(String(64), nullable=False),
+            "artifact_path": mapped_column(String(1024), nullable=False),
+            "artifact_sha256": mapped_column(String(64), nullable=False),
+            "reference_time": mapped_column(DateTime(timezone=True), nullable=False, index=True),
+            "prediction_time": mapped_column(DateTime(timezone=True), nullable=False, index=True),
+            "forecast_horizon": mapped_column(Integer, nullable=False),
+            "target_field": mapped_column(String(32), nullable=False),
+            "target_mode": mapped_column(String(32), nullable=False),
+            "reference_value": mapped_column(Float, nullable=False),
+            "predicted_value": mapped_column(Float, nullable=False),
+            "predicted_return": mapped_column(Float, nullable=False),
+            "predicted_direction": mapped_column(String(8), nullable=False),
+            "feature_names": mapped_column(JSON, nullable=False, default=list),
+            "extra_metadata": mapped_column(JSON, nullable=False, default=dict),
+            "actual_value": mapped_column(Float, nullable=True),
+            "actual_return": mapped_column(Float, nullable=True),
+            "actual_direction": mapped_column(String(8), nullable=True),
+            "absolute_error": mapped_column(Float, nullable=True),
+            "absolute_percentage_error": mapped_column(Float, nullable=True),
+            "direction_correct": mapped_column(Boolean, nullable=True),
+            "settled_at": mapped_column(DateTime(timezone=True), nullable=True, index=True),
+        }
+        model = cast(
+            type[Base],
+            type(_static_class_name(schema_name, "PredictionJournalModel"), (PredictionJournalModelMixin, Base), attributes),
+        )
+        _PREDICTION_JOURNAL_MODEL_CACHE[schema_name] = model
+        return model
 
 
 def get_agent_decision_journal_model(schema_name: str | None = None) -> type[Base]:
     """Return the static ORM model for agent decision journal rows."""
-    cached_model = _AGENT_DECISION_JOURNAL_MODEL_CACHE.get(schema_name)
-    if cached_model is not None:
-        return cached_model
+    with _MODEL_FACTORY_LOCK:
+        cached_model = _AGENT_DECISION_JOURNAL_MODEL_CACHE.get(schema_name)
+        if cached_model is not None:
+            return cached_model
 
-    table_args: tuple[Any, ...] = (
-        UniqueConstraint("cycle_id", "symbol", "interval", name="uq_agent_decision_journal_cycle_symbol"),
-    )
-    if schema_name:
-        table_args = (*table_args, {"schema": schema_name})
-    annotations = {
-        "id": Mapped[int],
-        "created_at": Mapped[datetime],
-        "updated_at": Mapped[datetime],
-        "cycle_id": Mapped[str],
-        "mode": Mapped[str],
-        "symbol": Mapped[str],
-        "interval": Mapped[str],
-        "reference_time": Mapped[datetime],
-        "action": Mapped[str],
-        "requested_quantity": Mapped[float | None],
-        "requested_usdt_amount": Mapped[float | None],
-        "confidence": Mapped[float | None],
-        "reason": Mapped[str],
-        "prediction_journal_ids": Mapped[list[int]],
-        "prediction_snapshot": Mapped[dict[str, object]],
-        "market_snapshot": Mapped[dict[str, object]],
-        "portfolio_snapshot": Mapped[dict[str, object]],
-        "risk_status": Mapped[str],
-        "risk_violations": Mapped[list[dict[str, object]]],
-        "execution_status": Mapped[str],
-        "exchange_order_id": Mapped[str | None],
-        "exchange_client_order_id": Mapped[str | None],
-        "exchange_response": Mapped[dict[str, object]],
-        "extra_metadata": Mapped[dict[str, object]],
-    }
-    attributes: dict[str, Any] = {
-        "__tablename__": "agent_decision_journal",
-        "__module__": __name__,
-        "__table_args__": table_args,
-        "__annotations__": annotations,
-        "id": mapped_column(Integer, primary_key=True, autoincrement=True),
-        "created_at": mapped_column(DateTime(timezone=True), nullable=False),
-        "updated_at": mapped_column(DateTime(timezone=True), nullable=False),
-        "cycle_id": mapped_column(String(128), nullable=False, index=True),
-        "mode": mapped_column(String(16), nullable=False, index=True),
-        "symbol": mapped_column(String(64), nullable=False, index=True),
-        "interval": mapped_column(String(5), nullable=False, index=True),
-        "reference_time": mapped_column(DateTime(timezone=True), nullable=False, index=True),
-        "action": mapped_column(String(8), nullable=False, index=True),
-        "requested_quantity": mapped_column(Float, nullable=True),
-        "requested_usdt_amount": mapped_column(Float, nullable=True),
-        "confidence": mapped_column(Float, nullable=True),
-        "reason": mapped_column(String(1024), nullable=False, default=""),
-        "prediction_journal_ids": mapped_column(JSON, nullable=False, default=list),
-        "prediction_snapshot": mapped_column(JSON, nullable=False, default=dict),
-        "market_snapshot": mapped_column(JSON, nullable=False, default=dict),
-        "portfolio_snapshot": mapped_column(JSON, nullable=False, default=dict),
-        "risk_status": mapped_column(String(16), nullable=False, index=True),
-        "risk_violations": mapped_column(JSON, nullable=False, default=list),
-        "execution_status": mapped_column(String(24), nullable=False, index=True),
-        "exchange_order_id": mapped_column(String(128), nullable=True),
-        "exchange_client_order_id": mapped_column(String(128), nullable=True),
-        "exchange_response": mapped_column(JSON, nullable=False, default=dict),
-        "extra_metadata": mapped_column(JSON, nullable=False, default=dict),
-    }
-    model = cast(type[Base], type("AgentDecisionJournalModel", (AgentDecisionJournalModelMixin, Base), attributes))
-    _AGENT_DECISION_JOURNAL_MODEL_CACHE[schema_name] = model
-    return model
+        table_args: tuple[Any, ...] = (
+            UniqueConstraint("cycle_id", "symbol", "interval", name="uq_agent_decision_journal_cycle_symbol"),
+        )
+        if schema_name:
+            table_args = (*table_args, {"schema": schema_name})
+        annotations = {
+            "id": Mapped[int],
+            "created_at": Mapped[datetime],
+            "updated_at": Mapped[datetime],
+            "cycle_id": Mapped[str],
+            "mode": Mapped[str],
+            "symbol": Mapped[str],
+            "interval": Mapped[str],
+            "reference_time": Mapped[datetime],
+            "action": Mapped[str],
+            "requested_quantity": Mapped[float | None],
+            "requested_usdt_amount": Mapped[float | None],
+            "confidence": Mapped[float | None],
+            "reason": Mapped[str],
+            "prediction_journal_ids": Mapped[list[int]],
+            "prediction_snapshot": Mapped[dict[str, object]],
+            "market_snapshot": Mapped[dict[str, object]],
+            "portfolio_snapshot": Mapped[dict[str, object]],
+            "risk_status": Mapped[str],
+            "risk_violations": Mapped[list[dict[str, object]]],
+            "execution_status": Mapped[str],
+            "exchange_order_id": Mapped[str | None],
+            "exchange_client_order_id": Mapped[str | None],
+            "exchange_response": Mapped[dict[str, object]],
+            "extra_metadata": Mapped[dict[str, object]],
+        }
+        attributes: dict[str, Any] = {
+            "__tablename__": "agent_decision_journal",
+            "__module__": __name__,
+            "__table_args__": table_args,
+            "__annotations__": annotations,
+            "id": mapped_column(Integer, primary_key=True, autoincrement=True),
+            "created_at": mapped_column(DateTime(timezone=True), nullable=False),
+            "updated_at": mapped_column(DateTime(timezone=True), nullable=False),
+            "cycle_id": mapped_column(String(128), nullable=False, index=True),
+            "mode": mapped_column(String(16), nullable=False, index=True),
+            "symbol": mapped_column(String(64), nullable=False, index=True),
+            "interval": mapped_column(String(5), nullable=False, index=True),
+            "reference_time": mapped_column(DateTime(timezone=True), nullable=False, index=True),
+            "action": mapped_column(String(8), nullable=False, index=True),
+            "requested_quantity": mapped_column(Float, nullable=True),
+            "requested_usdt_amount": mapped_column(Float, nullable=True),
+            "confidence": mapped_column(Float, nullable=True),
+            "reason": mapped_column(String(1024), nullable=False, default=""),
+            "prediction_journal_ids": mapped_column(JSON, nullable=False, default=list),
+            "prediction_snapshot": mapped_column(JSON, nullable=False, default=dict),
+            "market_snapshot": mapped_column(JSON, nullable=False, default=dict),
+            "portfolio_snapshot": mapped_column(JSON, nullable=False, default=dict),
+            "risk_status": mapped_column(String(16), nullable=False, index=True),
+            "risk_violations": mapped_column(JSON, nullable=False, default=list),
+            "execution_status": mapped_column(String(24), nullable=False, index=True),
+            "exchange_order_id": mapped_column(String(128), nullable=True),
+            "exchange_client_order_id": mapped_column(String(128), nullable=True),
+            "exchange_response": mapped_column(JSON, nullable=False, default=dict),
+            "extra_metadata": mapped_column(JSON, nullable=False, default=dict),
+        }
+        model = cast(
+            type[Base],
+            type(_static_class_name(schema_name, "AgentDecisionJournalModel"), (AgentDecisionJournalModelMixin, Base), attributes),
+        )
+        _AGENT_DECISION_JOURNAL_MODEL_CACHE[schema_name] = model
+        return model
 
 
 def indicator_to_record(entity: ComputedIndicatorSet) -> dict[str, object]:
@@ -568,50 +582,51 @@ def get_ohlcv_model(
     normalized_symbol = normalize_symbol(symbol)
     resolved_table_name = table_name or normalized_symbol
     cache_key = (schema_name, resolved_table_name)
-    cached_model = _OHLCV_MODEL_CACHE.get(cache_key)
-    if cached_model is not None:
-        return cached_model
+    with _MODEL_FACTORY_LOCK:
+        cached_model = _OHLCV_MODEL_CACHE.get(cache_key)
+        if cached_model is not None:
+            return cached_model
 
-    annotations = {
-        "interval": Mapped[str],
-        "open_time": Mapped[datetime],
-        "close_time": Mapped[datetime],
-        "open": Mapped[Decimal],
-        "high": Mapped[Decimal],
-        "low": Mapped[Decimal],
-        "close": Mapped[Decimal],
-        "volume": Mapped[Decimal],
-        "quote_asset_volume": Mapped[Decimal],
-        "trade_count": Mapped[int],
-        "taker_buy_base_asset_volume": Mapped[Decimal],
-        "taker_buy_quote_asset_volume": Mapped[Decimal],
-    }
-    attributes: dict[str, Any] = {
-        "__tablename__": resolved_table_name,
-        "__module__": __name__,
-        "__symbol__": normalized_symbol,
-        "__table_args__": {"schema": schema_name} if schema_name else {},
-        "__annotations__": annotations,
-        "interval": mapped_column(String(5), primary_key=True),
-        "open_time": mapped_column(DateTime(timezone=True), primary_key=True),
-        "close_time": mapped_column(DateTime(timezone=True), nullable=False),
-        "open": mapped_column(Numeric, nullable=False),
-        "high": mapped_column(Numeric, nullable=False),
-        "low": mapped_column(Numeric, nullable=False),
-        "close": mapped_column(Numeric, nullable=False),
-        "volume": mapped_column(Numeric, nullable=False),
-        "quote_asset_volume": mapped_column(Numeric, nullable=False),
-        "trade_count": mapped_column(Integer, nullable=False),
-        "taker_buy_base_asset_volume": mapped_column(Numeric, nullable=False),
-        "taker_buy_quote_asset_volume": mapped_column(Numeric, nullable=False),
-    }
+        annotations = {
+            "interval": Mapped[str],
+            "open_time": Mapped[datetime],
+            "close_time": Mapped[datetime],
+            "open": Mapped[Decimal],
+            "high": Mapped[Decimal],
+            "low": Mapped[Decimal],
+            "close": Mapped[Decimal],
+            "volume": Mapped[Decimal],
+            "quote_asset_volume": Mapped[Decimal],
+            "trade_count": Mapped[int],
+            "taker_buy_base_asset_volume": Mapped[Decimal],
+            "taker_buy_quote_asset_volume": Mapped[Decimal],
+        }
+        attributes: dict[str, Any] = {
+            "__tablename__": resolved_table_name,
+            "__module__": __name__,
+            "__symbol__": normalized_symbol,
+            "__table_args__": {"schema": schema_name} if schema_name else {},
+            "__annotations__": annotations,
+            "interval": mapped_column(String(5), primary_key=True),
+            "open_time": mapped_column(DateTime(timezone=True), primary_key=True),
+            "close_time": mapped_column(DateTime(timezone=True), nullable=False),
+            "open": mapped_column(Numeric, nullable=False),
+            "high": mapped_column(Numeric, nullable=False),
+            "low": mapped_column(Numeric, nullable=False),
+            "close": mapped_column(Numeric, nullable=False),
+            "volume": mapped_column(Numeric, nullable=False),
+            "quote_asset_volume": mapped_column(Numeric, nullable=False),
+            "trade_count": mapped_column(Integer, nullable=False),
+            "taker_buy_base_asset_volume": mapped_column(Numeric, nullable=False),
+            "taker_buy_quote_asset_volume": mapped_column(Numeric, nullable=False),
+        }
 
-    model = cast(
-        type[Base],
-        type(f"{_class_name_fragment(resolved_table_name)}OHLCVModel", (OHLCVModelMixin, Base), attributes),
-    )
-    _OHLCV_MODEL_CACHE[cache_key] = model
-    return model
+        model = cast(
+            type[Base],
+            type(f"{_class_name_fragment(resolved_table_name)}OHLCVModel", (OHLCVModelMixin, Base), attributes),
+        )
+        _OHLCV_MODEL_CACHE[cache_key] = model
+        return model
 
 
 def get_feature_model(
@@ -624,33 +639,34 @@ def get_feature_model(
     normalized_symbol = normalize_symbol(symbol)
     resolved_table_name = table_name or f"{normalized_symbol}_features"
     cache_key = (schema_name, resolved_table_name)
-    cached_model = _FEATURE_MODEL_CACHE.get(cache_key)
-    if cached_model is not None:
-        return cached_model
+    with _MODEL_FACTORY_LOCK:
+        cached_model = _FEATURE_MODEL_CACHE.get(cache_key)
+        if cached_model is not None:
+            return cached_model
 
-    annotations = {
-        "interval": Mapped[str],
-        "open_time": Mapped[datetime],
-        "is_ready": Mapped[bool],
-        "feature_payload": Mapped[dict[str, object]],
-        "missing_outputs": Mapped[list[str]],
-    }
-    attributes: dict[str, Any] = {
-        "__tablename__": resolved_table_name,
-        "__module__": __name__,
-        "__symbol__": normalized_symbol,
-        "__table_args__": {"schema": schema_name} if schema_name else {},
-        "__annotations__": annotations,
-        "interval": mapped_column(String(5), primary_key=True),
-        "open_time": mapped_column(DateTime(timezone=True), primary_key=True),
-        "is_ready": mapped_column(Boolean, nullable=False, default=False),
-        "feature_payload": mapped_column(JSON, nullable=False, default=dict),
-        "missing_outputs": mapped_column(JSON, nullable=False, default=list),
-    }
+        annotations = {
+            "interval": Mapped[str],
+            "open_time": Mapped[datetime],
+            "is_ready": Mapped[bool],
+            "feature_payload": Mapped[dict[str, object]],
+            "missing_outputs": Mapped[list[str]],
+        }
+        attributes: dict[str, Any] = {
+            "__tablename__": resolved_table_name,
+            "__module__": __name__,
+            "__symbol__": normalized_symbol,
+            "__table_args__": {"schema": schema_name} if schema_name else {},
+            "__annotations__": annotations,
+            "interval": mapped_column(String(5), primary_key=True),
+            "open_time": mapped_column(DateTime(timezone=True), primary_key=True),
+            "is_ready": mapped_column(Boolean, nullable=False, default=False),
+            "feature_payload": mapped_column(JSON, nullable=False, default=dict),
+            "missing_outputs": mapped_column(JSON, nullable=False, default=list),
+        }
 
-    model = cast(
-        type[Base],
-        type(f"{_class_name_fragment(resolved_table_name)}FeatureModel", (FeatureModelMixin, Base), attributes),
-    )
-    _FEATURE_MODEL_CACHE[cache_key] = model
-    return model
+        model = cast(
+            type[Base],
+            type(f"{_class_name_fragment(resolved_table_name)}FeatureModel", (FeatureModelMixin, Base), attributes),
+        )
+        _FEATURE_MODEL_CACHE[cache_key] = model
+        return model

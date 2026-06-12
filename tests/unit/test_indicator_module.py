@@ -202,6 +202,27 @@ class IndicatorPipelineServiceTests(unittest.TestCase):
             Decimal("9"),
         )
 
+    def test_compute_feature_batch_can_skip_persisting_warmup_rows(self) -> None:
+        candles = [make_candle(index, close=str(index + 1)) for index in range(10)]
+        feature_repository = FakeFeatureRepository()
+        service = IndicatorPipelineService(
+            market_data_repository=FakeMarketDataRepository(candles),
+            feature_repository=feature_repository,
+        )
+
+        service.compute_feature_batch(
+            symbol="BTCUSDT",
+            interval="1m",
+            start_time=datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+            end_time=datetime(2024, 1, 1, 0, 10, 0, tzinfo=UTC),
+            indicator_specs=(IndicatorSpec(name="", kind="sma", parameters={"period": 3}),),
+            persist_start_time=datetime(2024, 1, 1, 0, 2, 0, tzinfo=UTC),
+        )
+
+        persisted = feature_repository.saved_batches[0]
+        self.assertEqual(persisted[0].open_time, datetime(2024, 1, 1, 0, 2, 0, tzinfo=UTC))
+        self.assertTrue(all(record.is_ready for record in persisted))
+
     def test_service_marks_window_incomplete_when_history_is_too_short(self) -> None:
         candles = [make_candle(index, close=str(index + 1)) for index in range(3)]
         service = IndicatorPipelineService(

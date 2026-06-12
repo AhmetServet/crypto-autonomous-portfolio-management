@@ -319,6 +319,16 @@ uv run python -m unittest discover -s tests -t . -v
 - there are no live integration tests against TimescaleDB in this slice
 - compression, retention, and archival policies are not implemented yet
 
+## 10.1 Current Dashboard/API Integration
+The dashboard now exposes storage operations through FastAPI:
+
+```text
+POST /api/database/init
+GET  /api/data/coverage
+```
+
+The Data tab can initialize symbols, inspect OHLCV/indicator/feature coverage, and display missing ranges. The dashboard uses the same repository and coverage tables as the CLI, so it does not introduce a separate data source.
+
 ## 11. Next Steps
 1. Add integration tests against a real PostgreSQL + TimescaleDB instance.
 2. Introduce explicit migration support once the schema stabilizes.

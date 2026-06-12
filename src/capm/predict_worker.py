@@ -16,7 +16,8 @@ def main() -> None:
     parser.add_argument("--model-artifact", required=True)
     parser.add_argument("--symbol", required=True)
     parser.add_argument("--interval", required=True)
-    parser.add_argument("--at", required=True)
+    parser.add_argument("--at", default=None)
+    parser.add_argument("--no-journal", action="store_true")
     args = parser.parse_args()
 
     repository = build_repository()
@@ -24,13 +25,16 @@ def main() -> None:
         artifact_path=args.model_artifact,
         symbol=args.symbol,
         interval=args.interval,
-        reference_time=parse_datetime(args.at),
+        reference_time=parse_datetime(args.at) if args.at else None,
     )
-    journal_entry = PredictionJournalService(
-        journal_repository=repository,
-        market_data_repository=repository,
-    ).journal_prediction(prediction)
-    print(json.dumps({"status": "ok", "journal_id": journal_entry.id, "prediction": prediction.to_dict()}))
+    payload = {"status": "ok", "prediction": prediction.to_dict()}
+    if not args.no_journal:
+        journal_entry = PredictionJournalService(
+            journal_repository=repository,
+            market_data_repository=repository,
+        ).journal_prediction(prediction)
+        payload["journal_id"] = journal_entry.id
+    print(json.dumps(payload))
 
 
 if __name__ == "__main__":

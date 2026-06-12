@@ -345,18 +345,23 @@ Every cancelled order is written to a dedicated risk log with:
 ## 10. User Interface
 
 - **Framework:** React
-- **Connection:** REST API calls to Django backend via API Gateway
+- **Connection:** REST API calls to the FastAPI dashboard backend
 - **Authentication:** Not specified (TBD)
 
 ### 10.1 Features
 
-| Feature                | Description                                                |
-| ---------------------- | ---------------------------------------------------------- |
-| Risk parameter input   | Set max drawdown %, risk per trade %, other limits         |
-| Portfolio overview     | Current holdings, quantities, avg cost, unrealized PnL     |
-| Trade history          | List of all executed orders with timestamps and outcomes   |
-| System logs            | LLM decisions, risk control events, model inference status |
-| Portfolio growth chart | Equity curve visualization                                 |
+| Feature | Description |
+| --- | --- |
+| Core dashboard | Health, latest candle/indicator freshness, current market state, recent predictions, recent decisions, and Spot Demo portfolio view |
+| Trading controls | Manual Spot Demo market buy/sell forms with explicit confirmation and raw order inspection |
+| Data management | Database initialization, OHLCV fetch/ingest forms, coverage checks, missing candle repair, and indicator backfill |
+| Training UI | Native training forms for tabular, deep-learning, and statistical model presets with job queue, logs, cancellation, and artifacts |
+| Model registry | Active/inactive/archive controls, artifact metrics, model cards, stale warnings, and active model selection |
+| Prediction runtime | Manual prediction, all-active prediction, exact error messages when data/features are missing, journal toggle, settlement, and summary |
+| Risk controls | Emergency stop, max trade size, max position size, daily loss, orders/day, cooldown, exposure, and conservative/normal/aggressive presets |
+| Agent controls | Run once, continuous live loop start/stop, runtime config, cycle logs, prompt inspection, and execution status |
+| Execution view | Recent Spot Demo submitted orders, fill status, exchange IDs, linked decisions, realized PnL, and raw order drawer |
+| Charts and visuals | Chart.js price/candlestick overlay, indicator detail, realized PnL curve, buy/sell/hold markers, position hero, live status beacon, risk meters, model cards, and decision timeline |
 
 ---
 
@@ -366,9 +371,9 @@ Every cancelled order is written to a dedicated risk log with:
 
 | Component          | Technology                           |
 | ------------------ | ------------------------------------ |
-| Backend            | Django (REST API only, no templates) |
-| API layer          | Django REST Framework                |
-| Frontend           | React                                |
+| Backend            | Python modular monolith              |
+| API layer          | FastAPI                              |
+| Frontend           | React + Vite + Chart.js              |
 | Database           | PostgreSQL                           |
 | Hosting            | Personal VPS                         |
 | Process management | systemd or Supervisor                |
@@ -377,9 +382,9 @@ Every cancelled order is written to a dedicated risk log with:
 
 ### 11.2 Architectural Pattern
 
-**Monolith with event-driven internal flow.**
+**Modular monolith with event-driven internal flow.**
 
-- No microservices. Single deployable Django application.
+- No microservices. Single backend package plus React dashboard.
 - Internal events (e.g., candle closed) trigger processing stages in sequence.
 - Suitable for expected traffic volume; microservices overhead is not justified.
 

@@ -248,6 +248,17 @@ uv run python -m unittest discover -s tests -t . -v
 - no structured logging or metrics yet
 - no integration or contract tests against a live Binance environment
 
+## 10.1 Current Dashboard/API Integration
+The dashboard exposes market-data operations through FastAPI:
+
+```text
+POST /api/market/fetch-ohlcv
+POST /api/market/ingest-ohlcv
+POST /api/market/repair-ohlcv-gaps
+```
+
+The Data tab can preview or persist fetched candles, run REST/dump/dump-with-rest-tail ingestion, inspect coverage, and repair missing candle gaps. The live-cycle agent also performs inline REST recovery for recent closed-candle gaps before prediction, bounded by the configured large-gap threshold.
+
 ## 11. Next Integration Steps
 Recommended follow-up work:
 1. add exchange metadata discovery for valid symbols

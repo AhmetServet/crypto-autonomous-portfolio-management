@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -14,7 +15,13 @@ from capm.domains.features import ComputedIndicatorSet, GAP_REASON_MISSING_DERIV
 from capm.domains.market_data import OHLCV
 from capm.domains.prediction import PredictionJournalEntry, PredictionJournalSettlement
 from capm.domains.trading import AgentDecisionJournalEntry
-from capm.infra.database.models import get_coinpair_model, get_coverage_model, get_feature_model, get_ohlcv_model
+from capm.infra.database.models import (
+    get_agent_decision_journal_model,
+    get_coinpair_model,
+    get_coverage_model,
+    get_feature_model,
+    get_ohlcv_model,
+)
 from capm.infra.database.timescale import TimescaleMarketDataRepository
 
 
@@ -97,6 +104,13 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
         mapped = model.from_domain(candle)
 
         self.assertEqual(mapped.to_domain(), candle)
+
+    def test_static_model_factories_are_safe_under_concurrent_repository_creation(self) -> None:
+        schema_name = "concurrent_static_model_test"
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            models = tuple(executor.map(lambda _: get_agent_decision_journal_model(schema_name), range(32)))
+
+        self.assertEqual(len({id(model) for model in models}), 1)
 
     def test_feature_model_factory_round_trips_domain_entity(self) -> None:
         model = get_feature_model("btc/usdt")
@@ -506,6 +520,29 @@ class TimescaleMarketDataRepositoryTests(unittest.TestCase):
         rows = self.repository.list_recent_agent_decision_journal_entries("BTCUSDT", "1m", limit=2)
 
         self.assertEqual([row.reference_time.minute for row in rows], [2, 1])
+
+    def test_repository_gets_agent_decision_journal_entry_by_id(self) -> None:
+        saved = self.repository.save_agent_decision_journal_entry(
+            AgentDecisionJournalEntry(
+                cycle_id="cycle-1",
+                mode="dry-run",
+                symbol="BTCUSDT",
+                interval="1m",
+                reference_time=datetime(2024, 1, 1, 0, 0, tzinfo=UTC),
+                action="hold",
+                risk_status="skipped",
+                execution_status="not_submitted",
+                metadata={"llm_prompt": "prompt"},
+            )
+        )
+
+        row = self.repository.get_agent_decision_journal_entry(int(saved.id))
+
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row.id, saved.id)
+        self.assertEqual(row.metadata["llm_prompt"], "prompt")
+        self.assertIsNone(self.repository.get_agent_decision_journal_entry(9999))
 
     def test_repository_builds_operational_risk_snapshot_from_filled_orders(self) -> None:
         at = datetime(2024, 1, 1, 12, 0, tzinfo=UTC)

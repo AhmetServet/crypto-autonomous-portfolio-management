@@ -27,6 +27,9 @@ class AgentDecisionJournalRepositoryPort(Protocol):
     ) -> tuple[AgentDecisionJournalEntry, ...]:
         """Return recent agent decision rows for observability."""
 
+    def get_agent_decision_journal_entry(self, journal_id: int) -> AgentDecisionJournalEntry | None:
+        """Return one agent decision row by id."""
+
     def summarize_agent_decision_journal(
         self,
         symbol: str,

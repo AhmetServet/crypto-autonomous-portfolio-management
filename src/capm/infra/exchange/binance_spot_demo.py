@@ -137,7 +137,10 @@ class BinanceSpotDemoTradingAdapter:
             for item in symbol_payload.get("filters", [])
             if isinstance(item, dict) and "filterType" in item
         }
-        lot_size = filters.get("MARKET_LOT_SIZE") or filters.get("LOT_SIZE")
+        lot_size = self._first_positive_step_filter(
+            filters.get("MARKET_LOT_SIZE"),
+            filters.get("LOT_SIZE"),
+        )
         notional = filters.get("NOTIONAL") or filters.get("MIN_NOTIONAL")
         if lot_size is None or notional is None:
             raise ExchangeAPIError(f"Missing market-order filters for {normalized_symbol}.")
@@ -200,6 +203,15 @@ class BinanceSpotDemoTradingAdapter:
         if decimal_value <= 0:
             raise ValidationError(f"{field_name} must be greater than zero.")
         return decimal_value
+
+    @staticmethod
+    def _first_positive_step_filter(*filters: dict[str, Any] | None) -> dict[str, Any] | None:
+        for item in filters:
+            if item is None:
+                continue
+            if Decimal(str(item.get("stepSize", "0"))) > 0:
+                return item
+        return None
 
     @staticmethod
     def _floor_to_step(value: Decimal, step_size: Decimal) -> Decimal:
