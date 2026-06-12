@@ -236,6 +236,35 @@ export type ExecutionOrdersResponse = {
   orders: ExecutionOrderRow[]
 }
 
+export type ChartCandleRow = {
+  time: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+  indicators: Record<string, number | null>
+}
+
+export type PnlCurveRow = {
+  time: string
+  exchange_order_id: string | null
+  side: string
+  realized_pnl_usdt: number | null
+  cumulative_realized_pnl_usdt: number
+}
+
+export type DashboardChartsResponse = {
+  status: string
+  symbol: string
+  interval: string
+  lookback_hours: number
+  candles: ChartCandleRow[]
+  prediction_markers: PredictionRow[]
+  decision_markers: DecisionRow[]
+  pnl_curve: PnlCurveRow[]
+}
+
 export type LiveCycleRequest = {
   interval: string
   mode: 'dry-run' | 'spot-demo'
@@ -603,6 +632,21 @@ export function getDashboardSummary(params: {
     lookback_hours: String(params.lookbackHours),
   })
   return fetchJson<DashboardSummary>(`/api/dashboard/summary?${query.toString()}`)
+}
+
+export function getDashboardCharts(params: {
+  symbol: string
+  interval: string
+  lookbackHours: number
+  limit?: number
+}) {
+  const query = new URLSearchParams({
+    symbol: params.symbol,
+    interval: params.interval,
+    lookback_hours: String(params.lookbackHours),
+    limit: String(params.limit ?? 500),
+  })
+  return fetchJson<DashboardChartsResponse>(`/api/charts/dashboard?${query.toString()}`)
 }
 
 export function getPrompt(journalId: number) {

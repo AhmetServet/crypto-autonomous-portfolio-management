@@ -78,11 +78,13 @@ class IndicatorPipelineService:
         start_time: datetime,
         end_time: datetime,
         indicator_specs: tuple[IndicatorSpec, ...],
+        persist_start_time: datetime | None = None,
     ) -> FeatureBatch:
         """Compute and optionally persist derived features for a time range."""
         normalized_symbol = normalize_symbol(symbol)
         normalized_end_time = ensure_utc(end_time)
         normalized_start_time = ensure_utc(start_time)
+        normalized_persist_start_time = ensure_utc(persist_start_time) if persist_start_time is not None else normalized_start_time
         registry = IndicatorRegistry(indicator_specs)
         candles = self.market_data_repository.get_candles(
             normalized_symbol,
@@ -92,7 +94,9 @@ class IndicatorPipelineService:
         )
         indicator_sets = registry.compute(candles)
         if self.feature_repository and indicator_sets:
-            self.feature_repository.save_indicator_batch(indicator_sets)
+            self.feature_repository.save_indicator_batch(
+                [indicator_set for indicator_set in indicator_sets if indicator_set.open_time >= normalized_persist_start_time]
+            )
 
         rows = build_feature_rows(candles, indicator_sets)
         return FeatureBatch(

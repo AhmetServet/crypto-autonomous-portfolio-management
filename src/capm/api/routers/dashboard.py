@@ -46,6 +46,19 @@ def dashboard_summary(
     )
 
 
+@router.get("/api/charts/dashboard")
+def dashboard_charts(
+    service: DashboardServiceDependency,
+    symbol: str = Query(default="BTCUSDT", min_length=1),
+    interval: str = Query(default="1m", min_length=1),
+    lookback_hours: int = Query(default=24, ge=1, le=24 * 30),
+    limit: int = Query(default=500, ge=10, le=5000),
+) -> object:
+    return jsonable_encoder(
+        service.charts(symbol=symbol, interval=interval, lookback_hours=lookback_hours, limit=limit)
+    )
+
+
 @router.get("/api/agent/decisions")
 def agent_decisions(
     service: DashboardServiceDependency,

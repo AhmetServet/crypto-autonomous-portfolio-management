@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import json
 import subprocess
 import sys
 from typing import Callable
@@ -158,17 +159,24 @@ class LiveTradingCycleService:
                 )
 
             max_lookback = max(spec.required_lookback for spec in specs)
-            indicator_start = latest_candle_time - (interval_delta * max(max_lookback * 2, 100))
+            required_prediction_rows = self._required_prediction_feature_rows(symbol)
+            persist_window_rows = max(max_lookback * 2, 100, required_prediction_rows)
+            indicator_persist_start = latest_candle_time - (interval_delta * (persist_window_rows - 1))
+            warmup_start = indicator_persist_start - (interval_delta * (max_lookback - 1))
             if large_gap_recovery_start is not None:
-                indicator_start = large_gap_recovery_start - (interval_delta * (max_lookback - 1))
+                indicator_persist_start = min(indicator_persist_start, large_gap_recovery_start)
+                warmup_start = indicator_persist_start - (interval_delta * (max_lookback - 1))
             batch = indicator_pipeline.compute_feature_batch(
                 symbol=symbol,
                 interval=interval,
-                start_time=indicator_start,
+                start_time=warmup_start,
                 end_time=cycle_time,
                 indicator_specs=specs,
+                persist_start_time=indicator_persist_start,
             )
-            persisted_indicators += len(batch.indicator_sets)
+            persisted_indicators += sum(
+                1 for indicator_set in batch.indicator_sets if indicator_set.open_time >= indicator_persist_start
+            )
 
             settlement = prediction_journal.settle_predictions(
                 symbol=symbol,
@@ -229,6 +237,29 @@ class LiveTradingCycleService:
             raise RuntimeError(
                 f"Prediction worker failed for {symbol} artifact {artifact_path}: {exc.stderr.strip()}"
             ) from exc
+
+    def _required_prediction_feature_rows(self, symbol: str) -> int:
+        required_rows = 1
+        for artifact_path in self.artifacts_by_symbol.get(symbol, ()):
+            required_rows = max(required_rows, self._artifact_sequence_length(artifact_path))
+        return required_rows
+
+    @staticmethod
+    def _artifact_sequence_length(artifact_path: Path) -> int:
+        summary_path = artifact_path.parent / "summary.json"
+        if not summary_path.is_file():
+            return 1
+        try:
+            with summary_path.open() as summary_file:
+                payload = json.load(summary_file)
+        except (OSError, json.JSONDecodeError):
+            return 1
+        if isinstance(payload, dict) and payload.get("model_artifact_path") == str(artifact_path):
+            try:
+                return max(1, int(payload.get("sequence_length", 1)))
+            except (TypeError, ValueError):
+                return 1
+        return 1
 
     def _validate_artifact_freshness(self, cycle_time: datetime) -> None:
         if self.allow_stale_models:

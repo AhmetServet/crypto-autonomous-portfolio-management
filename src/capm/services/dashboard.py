@@ -8,6 +8,7 @@ import os
 from typing import Any, Protocol
 
 from capm.core.config import BinanceSettings
+from capm.domains.market_data import interval_to_timedelta
 from capm.domains.trading import AgentDecisionJournalEntry, OperationalRiskSnapshot, RiskConfig
 from capm.infra.exchange import BinanceSpotDemoTradingAdapter
 from capm.services.prediction_journal import PredictionJournalService
@@ -25,11 +26,17 @@ class DashboardRepositoryPort(Protocol):
     def get_candle(self, symbol: str, interval: str, open_time: datetime) -> Any | None:
         """Return one stored candle."""
 
+    def get_candles(self, symbol: str, interval: str, start_time: datetime, end_time: datetime) -> list[Any]:
+        """Return stored candles for a range."""
+
     def get_latest_indicator_time(self, symbol: str, interval: str) -> datetime | None:
         """Return the latest stored indicator timestamp."""
 
     def get_indicator_set(self, symbol: str, interval: str, open_time: datetime) -> Any | None:
         """Return one stored indicator set."""
+
+    def get_indicator_batch(self, symbol: str, interval: str, start_time: datetime, end_time: datetime) -> list[Any]:
+        """Return stored indicator rows for a range."""
 
     def list_recent_prediction_journal_entries(self, symbol: str, interval: str, limit: int = 20) -> tuple[Any, ...]:
         """Return recent prediction rows."""
@@ -192,6 +199,45 @@ class DashboardReportService:
             "interval": interval,
             "limit": limit,
             "predictions": [prediction_report_payload(entry) for entry in entries],
+        }
+
+    def charts(self, *, symbol: str, interval: str, lookback_hours: int, limit: int) -> dict[str, object]:
+        """Return chart-ready market, prediction, decision, and PnL series."""
+        now = datetime.now(UTC)
+        latest_candle_time = self.repository.get_latest_candle_time(symbol, interval)
+        end_time = latest_candle_time + interval_to_timedelta(interval) if latest_candle_time else now
+        start_time = end_time - timedelta(hours=lookback_hours)
+        candles = self.repository.get_candles(symbol, interval, start_time, end_time)
+        if limit > 0 and len(candles) > limit:
+            step = max(1, len(candles) // limit)
+            candles = candles[::step][-limit:]
+        indicators_by_time = {
+            item.open_time: item
+            for item in self.repository.get_indicator_batch(symbol, interval, start_time, end_time)
+        }
+        predictions = self.repository.list_recent_prediction_journal_entries(symbol, interval, limit)
+        decisions = self.repository.list_recent_agent_decision_journal_entries(symbol, interval, limit)
+        order_rows = self._order_rows(tuple(decisions))
+        return {
+            "status": "ok",
+            "symbol": symbol,
+            "interval": interval,
+            "lookback_hours": lookback_hours,
+            "candles": [
+                self._chart_candle_payload(candle, indicators_by_time.get(candle.open_time))
+                for candle in candles
+            ],
+            "prediction_markers": [
+                prediction_report_payload(entry)
+                for entry in predictions
+                if start_time <= entry.reference_time < end_time
+            ],
+            "decision_markers": [
+                decision_report_payload(entry)
+                for entry in decisions
+                if start_time <= entry.reference_time < end_time
+            ],
+            "pnl_curve": self._pnl_curve(order_rows),
         }
 
     def decisions(self, *, symbol: str, interval: str, limit: int, include_prompts: bool = False) -> dict[str, object]:
@@ -431,6 +477,22 @@ class DashboardReportService:
             ),
         }
 
+    @staticmethod
+    def _chart_candle_payload(candle: Any, indicators: Any | None) -> dict[str, object]:
+        values = dict(indicators.values) if indicators is not None else {}
+        return {
+            "time": candle.open_time,
+            "open": float(candle.open),
+            "high": float(candle.high),
+            "low": float(candle.low),
+            "close": float(candle.close),
+            "volume": float(candle.volume),
+            "indicators": {
+                key: (float(value) if value is not None else None)
+                for key, value in values.items()
+            },
+        }
+
     @classmethod
     def _order_rows(cls, entries: tuple[AgentDecisionJournalEntry, ...]) -> list[dict[str, object]]:
         sorted_entries = sorted(
@@ -523,3 +585,22 @@ class DashboardReportService:
         if isinstance(submission, dict):
             return submission
         return exchange_response
+
+    @staticmethod
+    def _pnl_curve(order_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+        cumulative_realized = 0.0
+        curve: list[dict[str, object]] = []
+        for row in reversed(order_rows):
+            realized = row.get("realized_pnl_usdt")
+            if isinstance(realized, (int, float)):
+                cumulative_realized += float(realized)
+            curve.append(
+                {
+                    "time": row["created_at"] or row["reference_time"],
+                    "exchange_order_id": row["exchange_order_id"],
+                    "side": row["side"],
+                    "realized_pnl_usdt": realized,
+                    "cumulative_realized_pnl_usdt": cumulative_realized,
+                }
+            )
+        return curve

@@ -34,6 +34,18 @@ class FakeDashboardService:
             "recent_decisions": [],
         }
 
+    def charts(self, *, symbol: str, interval: str, lookback_hours: int, limit: int):
+        return {
+            "status": "ok",
+            "symbol": symbol,
+            "interval": interval,
+            "lookback_hours": lookback_hours,
+            "candles": [],
+            "prediction_markers": [],
+            "decision_markers": [],
+            "pnl_curve": [],
+        }
+
     def decisions(self, *, symbol: str, interval: str, limit: int, include_prompts: bool = False):
         return {
             "status": "ok",
@@ -185,6 +197,7 @@ class DashboardApiTests(unittest.TestCase):
     def test_read_only_dashboard_routes(self) -> None:
         paths = (
             "/api/symbols?interval=1m",
+            "/api/charts/dashboard?symbol=BTCUSDT&interval=1m&lookback_hours=24&limit=100",
             "/api/agent/decisions?symbol=BTCUSDT&interval=1m&limit=10&include_prompts=true",
             "/api/execution/orders?symbol=BTCUSDT&interval=1m&limit=10",
             "/api/predictions?symbol=BTCUSDT&interval=1m&limit=10",
