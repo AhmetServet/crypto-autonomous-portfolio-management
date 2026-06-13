@@ -11,3 +11,6 @@ __pycache__/
 # Experiment outputs (keep directory via .gitkeep)
 experiments/results/*
 !experiments/results/.gitkeep
+
+# Local DB exports
+db/exports/

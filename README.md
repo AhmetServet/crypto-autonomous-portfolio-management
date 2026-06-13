@@ -127,6 +127,24 @@ Production-style tabular training writes deployable `model.pkl` artifacts plus `
 uv run capm-train-production --config experiments/configs/full_tabular_compare_btcusdt_1m_15m.json
 ```
 
+To compare XGBoost parameter profiles only, run:
+
+```bash
+uv run capm-train-production --config experiments/configs/xgboost_parameter_playground_btcusdt_1m_15m.json
+```
+
+To train the tuned LightGBM candidate only, run:
+
+```bash
+uv run capm-train-production --config experiments/configs/lightgbm_parameter_playground_btcusdt_1m_15m.json
+```
+
+To train the tuned LSTM sequence candidate, run:
+
+```bash
+uv run capm-train-deep-learning --config experiments/configs/lstm_parameter_playground_btcusdt_1m_15m.json
+```
+
 Run one prediction from a saved production model or a walk-forward `trained_models.pkl` artifact:
 
 ```bash
