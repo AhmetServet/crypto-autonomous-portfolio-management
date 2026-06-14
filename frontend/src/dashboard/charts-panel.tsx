@@ -66,6 +66,7 @@ export function DashboardChartsPanel({
           Lookback
           <select value={lookbackHours} onChange={(event) => setLookbackHours(Number(event.target.value))}>
             <option value={1}>1h</option>
+            <option value={2}>2h</option>
             <option value={6}>6h</option>
             <option value={24}>24h</option>
             <option value={72}>72h</option>
@@ -155,9 +156,9 @@ function buildPriceChart(points: ChartPoint[]): ChartData<'line', Array<number |
   const datasets: ChartDatasetExtra[] = [
     lineDataset('close', points, '#f4c744', 1.4),
     ...PRICE_INDICATOR_KEYS.filter((key) => hasNumber(points, key)).map((key, index) => lineDataset(key, points, indicatorStroke(index), 1.2, index % 2 === 1)),
-    markerDataset('buy', points, '#00d084', 'triangle', 18, 0),
-    markerDataset('sell', points, '#ff5b5b', 'triangle', 18, 180),
-    markerDataset('hold', points, '#d8e2ea', 'circle', 12, 0),
+    markerDataset('buy', points, '#00d084', 'triangle', 9, 0),
+    markerDataset('sell', points, '#ff5b5b', 'triangle', 9, 180),
+    markerDataset('hold', points, '#d8e2ea', 'circle', 6, 0),
   ]
   return { labels, datasets }
 }
