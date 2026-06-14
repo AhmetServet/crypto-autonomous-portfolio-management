@@ -133,9 +133,3 @@ Bu bulgu, yüksek tahmin başarısının doğrudan finansal başarıya dönüşm
 ## Genişletilebilirlik Bulguları
 
 Çalışmanın bir diğer bulgusu, sistemin yazılım mimarisi açısından genişletilebilir olmasına rağmen operasyonel maliyetlerin model sayısı ve coin sayısıyla birlikte hızlı biçimde artmasıdır. Repo içinde model registry, artifact yönetimi, prediction runtime, dashboard training job yapısı ve canlı döngü komutları geliştirilmiştir. Ancak çoklu coin ve çoklu model senaryosunda her modelin dakikalık olarak çalıştırılması, her coin için veri güncelliğinin korunması ve risk limitlerinin ayrı ayrı izlenmesi daha güçlü donanım ve daha olgun bir iş zamanlayıcı yapısı gerektirmektedir.
-
-## Genel Değerlendirme
-
-Genel olarak bulgular, geliştirilen sistemin teknik olarak çalışır durumda olduğunu ve testnet/Spot Demo üzerinde emir üretebildiğini göstermektedir. Veri alımı, veritabanına kayıt, özellik üretimi, model eğitimi, tahmin üretimi, tahmin günlüğü, karar üretimi, risk kontrolü, emir iletimi ve dashboard üzerinden izleme gibi temel bileşenler uygulanmıştır. Ancak model performanslarının buy & hold stratejisini aşamaması, sistemin yatırım kararı üretme açısından henüz olgunlaşmadığını ortaya koymaktadır.
-
-Bu nedenle mevcut çalışma, karlılığı kanıtlanmış bir alım-satım sistemi olmaktan çok, kripto para piyasaları için veri işleme, model karşılaştırma, tahmin günlüğü, risk kontrollü karar üretimi ve otonom işlem altyapısı geliştirmeye yönelik bir prototip olarak değerlendirilmelidir. Gelecek çalışmalarda çoklu coin desteği, daha düşük kaynak tüketen inference yapısı, daha uzun süreli canlı test, işlem maliyeti ve slippage simülasyonu, stop-loss ve take-profit kuralları, portföy ağırlıklandırma, ensemble model denemeleri ve risk-ayarlı performans metrikleri sisteme eklenerek model tabanlı stratejilerin buy & hold karşısındaki başarısı daha kapsamlı biçimde incelenebilir.
