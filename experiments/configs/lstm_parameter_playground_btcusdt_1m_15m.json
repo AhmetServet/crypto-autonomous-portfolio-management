@@ -1,0 +1,33 @@
+{
+  "description": "BTCUSDT 1m tuned LSTM production candidate for 15-minute return prediction. Uses one higher-capacity sequence model with z-score scaling.",
+  "symbol": "BTCUSDT",
+  "interval": "1m",
+  "model_name": "lstm",
+  "start_time": "2021-05-26T00:00:00Z",
+  "split_time": "2026-05-29T22:32:00Z",
+  "end_time": "2026-06-05T22:32:00Z",
+  "sequence_length": 240,
+  "forecast_horizon": 15,
+  "target_field": "close",
+  "target_mode": "return",
+  "scaler": "zscore",
+  "required_features": [],
+  "artifacts_dir": "experiments/results",
+  "model_parameters": {
+    "hidden_size": 128,
+    "num_layers": 2,
+    "dropout": 0.2,
+    "learning_rate": 0.0005,
+    "batch_size": 1024,
+    "max_epochs": 20,
+    "weight_decay": 0.00005,
+    "seed": 42,
+    "device": "auto"
+  },
+  "backtest": {
+    "starting_cash": 10000.0,
+    "buy_threshold": 0.0002,
+    "commission_rate": 0.001,
+    "cash_fraction": 0.95
+  }
+}
