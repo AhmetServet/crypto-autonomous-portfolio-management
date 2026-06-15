@@ -870,9 +870,10 @@ tbody tr:hover {
 }
 
 .drawer {
-    width: min(760px, 100vw);
+    width: min(900px, 100vw);
     height: 100vh;
     overflow-y: auto;
+    overflow-x: hidden;
     border-left: 1px solid #f4c744;
     background: #122436;
     color: #fff;
@@ -903,17 +904,72 @@ tbody tr:hover {
 
 .prompt-blocks {
     display: grid;
-    gap: 12px;
-    padding: 14px;
+    gap: 14px;
+    padding: 16px;
+}
+
+.prompt-meta-panel {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border: 1px solid #314454;
+    background: #102131;
+}
+
+.prompt-meta-panel div {
+    min-width: 0;
+    border-right: 1px solid #314454;
+    padding: 10px 12px;
+}
+
+.prompt-meta-panel div:last-child {
+    border-right: 0;
+}
+
+.prompt-meta-panel span {
+    display: block;
+    color: #a9bbc9;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.prompt-meta-panel strong {
+    display: block;
+    margin-top: 7px;
+    color: #fff;
+    font-size: 13px;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+}
+
+.prompt-section {
+    min-width: 0;
+    border: 1px solid #314454;
+    background: #0f1f2e;
 }
 
 .prompt-blocks h3,
 .result-block h3 {
     margin: 0;
     border-bottom: 1px solid #314454;
-    padding: 8px 10px;
+    padding: 9px 12px;
     background: #1a2d3f;
     font-size: 12px;
+    line-height: 1.35;
+}
+
+.prompt-code {
+    max-height: none;
+    overflow-x: hidden;
+    border: 0;
+    padding: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.prompt-code.json {
+    max-height: 520px;
+    overflow-y: auto;
 }
 
 pre {
@@ -929,6 +985,7 @@ pre {
     font-size: 12px;
     line-height: 1.5;
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
 }
 
 @media (max-width: 1100px) {
@@ -1002,6 +1059,27 @@ pre {
     .toolbar input,
     .refresh-button {
         width: 100%;
+    }
+
+    .drawer {
+        border-left: 0;
+    }
+
+    .prompt-blocks {
+        padding: 12px;
+    }
+
+    .prompt-meta-panel {
+        grid-template-columns: 1fr;
+    }
+
+    .prompt-meta-panel div {
+        border-right: 0;
+        border-bottom: 1px solid #314454;
+    }
+
+    .prompt-meta-panel div:last-child {
+        border-bottom: 0;
     }
 }
 

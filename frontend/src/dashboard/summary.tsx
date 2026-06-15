@@ -6,6 +6,27 @@ import { getPrompt } from '../api'
 import { formatAge, formatNumber, formatTime } from './format'
 import { EmptyState, Panel } from './primitives'
 
+function readableJson(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '-'
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2)
+    } catch {
+      return value
+    }
+  }
+  return JSON.stringify(value, null, 2)
+}
+
+function PromptSection({ title, children, kind = 'text' }: { title: string; children: string; kind?: 'text' | 'json' }) {
+  return (
+    <section className="prompt-section">
+      <h3>{title}</h3>
+      <pre className={`prompt-code ${kind}`}>{children || '-'}</pre>
+    </section>
+  )
+}
+
 export function RiskList({ summary }: { summary: DashboardSummary }) {
   const risk = summary.operational_risk
   const position = summary.position
@@ -167,22 +188,31 @@ export function PromptDrawer({ journalId, onClose }: { journalId: number; onClos
         {promptQuery.error ? <EmptyState message={promptQuery.error.message} /> : null}
         {promptQuery.data ? (
           <div className="prompt-blocks">
-            <div>
-              <h3>Provider</h3>
-              <pre>{`${promptQuery.data.provider_host ?? '-'} / ${promptQuery.data.model ?? '-'}`}</pre>
-            </div>
-            <div>
-              <h3>System</h3>
-              <pre>{promptQuery.data.system_prompt ?? '-'}</pre>
-            </div>
-            <div>
-              <h3>User</h3>
-              <pre>{promptQuery.data.prompt ?? '-'}</pre>
-            </div>
-            <div>
-              <h3>Raw Response</h3>
-              <pre>{JSON.stringify(promptQuery.data.raw_response, null, 2)}</pre>
-            </div>
+            <section className="prompt-meta-panel" aria-label="Provider details">
+              <div>
+                <span>Provider</span>
+                <strong>{promptQuery.data.provider_host ?? '-'}</strong>
+              </div>
+              <div>
+                <span>Model</span>
+                <strong>{promptQuery.data.model ?? '-'}</strong>
+              </div>
+              <div>
+                <span>Latency</span>
+                <strong>{promptQuery.data.latency_seconds === null ? '-' : `${promptQuery.data.latency_seconds}s`}</strong>
+              </div>
+              <div>
+                <span>Symbol / Interval</span>
+                <strong>{`${promptQuery.data.symbol ?? '-'} / ${promptQuery.data.interval ?? '-'}`}</strong>
+              </div>
+            </section>
+            <PromptSection title="System">{promptQuery.data.system_prompt ?? '-'}</PromptSection>
+            <PromptSection title="User" kind="json">
+              {readableJson(promptQuery.data.prompt)}
+            </PromptSection>
+            <PromptSection title="Raw Response" kind="json">
+              {readableJson(promptQuery.data.raw_response)}
+            </PromptSection>
           </div>
         ) : null}
       </aside>
